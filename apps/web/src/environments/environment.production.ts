@@ -6,7 +6,13 @@
  */
 export const environment = {
   production: true,
-  apiBaseUrl: 'https://REPLACE_WITH_YOUR_RENDER_API_URL/api',
-  supabaseUrl: 'https://REPLACE_WITH_YOUR_PROJECT_REF.supabase.co',
-  supabaseAnonKey: 'REPLACE_WITH_YOUR_SUPABASE_ANON_KEY',
+  // Update after the Render service exists — Render assigns this URL the
+  // first time the "job-portal-api" service deploys. Confirm it under the
+  // service's page (top of the dashboard) rather than assuming this default.
+  apiBaseUrl: 'https://job-portal-api.onrender.com/api',
+  // Same Supabase project as apps/web/src/environments/environment.ts — the
+  // anon key is safe to ship to the browser by design (RLS-gated).
+  supabaseUrl: 'https://nkqszcnefqtvigdumxec.supabase.co',
+  supabaseAnonKey:
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5rcXN6Y25lZnF0dmlnZHVteGVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0NjczODIsImV4cCI6MjA4OTA0MzM4Mn0.QxKuWYN8ovRCCbOfz5_Ouly0f63XTHBm5N1BIz-PPTc',
 };
