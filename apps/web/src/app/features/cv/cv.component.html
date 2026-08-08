@@ -1,0 +1,105 @@
+@if (loading()) {
+  <p class="loading">Loading…</p>
+} @else {
+  <div class="cv-page">
+    <header class="page-header">
+      <h1>CV &amp; Skills</h1>
+      <p class="hint">
+        This is what the skill-gap engine scores every job against. Keep it current —
+        new analyses use whatever is saved here, past ones aren't retroactively rescored.
+      </p>
+    </header>
+
+    <div class="card">
+      <h2>Profile</h2>
+      <div class="form-row">
+        <label>
+          Current title
+          <input class="input" [(ngModel)]="currentTitle" />
+        </label>
+        <label class="years-field">
+          Years of experience
+          <input class="input" type="number" step="0.5" min="0" [(ngModel)]="experienceYears" />
+        </label>
+      </div>
+
+      <label>
+        CV text
+        <textarea
+          class="input"
+          rows="12"
+          [(ngModel)]="rawCvText"
+          placeholder="Paste your CV / resume text here"
+        ></textarea>
+      </label>
+
+      <div class="save-row">
+        @if (saved()) {
+          <span class="saved-hint">Saved</span>
+        }
+        <button class="btn btn-primary" (click)="saveProfile()" [disabled]="saving()">
+          {{ saving() ? 'Saving…' : 'Save profile' }}
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Skills</h2>
+
+      <div class="add-skill-row">
+        <div class="autocomplete">
+          <input
+            class="input"
+            placeholder="Add a skill (e.g. NestJS, Kubernetes, GraphQL)"
+            [(ngModel)]="newSkillName"
+            (keyup.enter)="addSkill()"
+          />
+          @if (suggestions().length > 0) {
+            <ul class="suggestions">
+              @for (s of suggestions(); track s.id) {
+                <li (click)="addSkill(s.name)">{{ displaySkillName(s.name) }}</li>
+              }
+            </ul>
+          }
+        </div>
+        <select class="input proficiency-select" [(ngModel)]="newSkillProficiency">
+          <option value="">No level</option>
+          @for (level of proficiencyLevels; track level) {
+            <option [value]="level">{{ level }}</option>
+          }
+        </select>
+        <button class="btn btn-primary" (click)="addSkill()" [disabled]="!newSkillName.trim()">
+          Add
+        </button>
+      </div>
+
+      @if (groupedSkills().length === 0) {
+        <p class="empty">No skills recorded yet — add some above.</p>
+      }
+
+      @for (group of groupedSkills(); track group.category) {
+        <div class="skill-group">
+          <h3>{{ group.category }}</h3>
+          <ul class="skill-list">
+            @for (skill of group.items; track skill.skill_id) {
+              <li>
+                <span class="skill-name">{{ displaySkillName(skill.name) }}</span>
+                <select
+                  class="input proficiency-select-sm"
+                  [ngModel]="skill.proficiency ?? ''"
+                  (ngModelChange)="setProficiency(skill, $event)"
+                >
+                  <option value="">No level</option>
+                  @for (level of proficiencyLevels; track level) {
+                    <option [value]="level">{{ level }}</option>
+                  }
+                </select>
+                <button class="remove-btn" (click)="removeSkill(skill.skill_id)" title="Remove">✕</button>
+              </li>
+            }
+          </ul>
+        </div>
+      }
+    </div>
+  </div>
+}
