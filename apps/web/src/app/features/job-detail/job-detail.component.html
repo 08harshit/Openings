@@ -1,0 +1,109 @@
+@if (loading()) {
+  <p class="loading">Loading…</p>
+} @else if (job() === null) {
+  <p class="loading">Job not found.</p>
+} @else {
+  @if (job(); as jobData) {
+  <div class="job-detail">
+    <button class="btn back-btn" (click)="goBack()">← Back to dashboard</button>
+
+    <div class="card header-card">
+      <div class="header-top">
+        <div>
+          <h1>{{ jobData.title }}</h1>
+          <p class="subline">
+            {{ jobData.company_name || 'Unknown company' }} · {{ jobData.location || 'Location unknown' }}
+            · <span class="seniority">{{ jobData.seniority_guess }}</span>
+          </p>
+        </div>
+        <app-match-badge [score]="jobData.match_score" />
+      </div>
+
+      <div class="header-actions">
+        <a class="btn btn-primary" [href]="jobData.url" target="_blank" rel="noopener">Open posting ↗</a>
+        <app-status-select [status]="jobData.status" (statusChange)="updateStatus($event)" />
+        @if (jobData.is_stale) {
+          <span class="stale-dot">No update in a while</span>
+        }
+        <button class="btn btn-danger" (click)="deleteJob()">Remove</button>
+      </div>
+
+      @if (jobData.summary_text) {
+        <p class="summary">{{ jobData.summary_text }}</p>
+      }
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Skills</h2>
+        <h3>Matched</h3>
+        <app-skill-chips [skills]="jobData.matched_skills" variant="matched" [max]="30" />
+        <h3>Missing</h3>
+        <app-skill-chips [skills]="jobData.missing_skills" variant="missing" [max]="30" />
+      </div>
+
+      <div class="card">
+        <h2>Description</h2>
+        @if (jobData.description_raw) {
+          <pre class="description">{{ jobData.description_raw }}</pre>
+        } @else {
+          <p class="empty">No description stored.</p>
+        }
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Notes</h2>
+      <div class="note-form">
+        <textarea
+          class="input"
+          rows="3"
+          placeholder="Add a note — interview prep, referral contact, thoughts…"
+          [(ngModel)]="newNote"
+        ></textarea>
+        <button class="btn btn-primary" (click)="addNote()" [disabled]="!newNote.trim() || savingNote()">
+          Add note
+        </button>
+      </div>
+
+      @if (jobData.notes.length === 0) {
+        <p class="empty">No notes yet.</p>
+      } @else {
+        <ul class="note-list">
+          @for (note of jobData.notes; track note.id) {
+            <li class="note-item">
+              <p>{{ note.note_text }}</p>
+              <div class="note-meta">
+                <span>{{ note.created_at | date: 'medium' }}</span>
+                <button class="link-btn" (click)="deleteNote(note.id)">Delete</button>
+              </div>
+            </li>
+          }
+        </ul>
+      }
+    </div>
+
+    <div class="card">
+      <h2>History</h2>
+      @if (jobData.history.length === 0) {
+        <p class="empty">No history recorded yet.</p>
+      } @else {
+        <ul class="history-list">
+          @for (entry of jobData.history; track entry.id) {
+            <li>
+              <span class="history-dot"></span>
+              <span>
+                @if (entry.old_status) {
+                  {{ statusLabels[entry.old_status] }} →
+                }
+                <strong>{{ statusLabels[entry.new_status] }}</strong>
+              </span>
+              <span class="history-time">{{ entry.changed_at | date: 'medium' }}</span>
+            </li>
+          }
+        </ul>
+      }
+    </div>
+  </div>
+  }
+}
