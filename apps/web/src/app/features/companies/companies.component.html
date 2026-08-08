@@ -1,0 +1,122 @@
+<div class="companies-page">
+  <header class="page-header">
+    <h1>Companies</h1>
+    <p class="hint">
+      Every refresh discovers new company names from search, then automatically finds each
+      one's real careers page (via their Greenhouse/Lever/Ashby board or their own career site)
+      — no manual URL entry needed. Pin a company yourself to guarantee it's always scraped.
+    </p>
+  </header>
+
+  <div class="card add-form">
+    <h2>Pin a company</h2>
+    @if (error()) {
+      <div class="alert">{{ error() }}</div>
+    }
+    <div class="form-row">
+      <input class="input" placeholder="Company name" [(ngModel)]="newName" />
+      <input class="input" placeholder="Careers page URL (optional)" [(ngModel)]="newCareersUrl" />
+      <button class="btn btn-primary" (click)="add()" [disabled]="!newName.trim() || saving()">
+        {{ saving() ? 'Adding…' : 'Add' }}
+      </button>
+    </div>
+  </div>
+
+  @if (loading()) {
+    <p class="loading">Loading…</p>
+  } @else {
+    <div class="card">
+      <h2>Pinned ({{ pinned.length }})</h2>
+      @if (pinned.length === 0) {
+        <p class="empty">No pinned companies yet — add one above.</p>
+      } @else {
+        <ul class="company-list">
+          @for (company of pinned; track company.id) {
+            <li>
+              <div class="company-info">
+                <span class="company-name">{{ company.name }}</span>
+                @if (company.careers_url) {
+                  <a [href]="company.careers_url" target="_blank" rel="noopener">{{ company.careers_url }}</a>
+                } @else {
+                  <span class="no-url">No careers URL — pin won't be scraped until you add one</span>
+                }
+              </div>
+              <div class="company-meta">
+                @if (company.last_scraped_at) {
+                  <span class="scraped-at">Last scraped {{ company.last_scraped_at | date: 'short' }}</span>
+                }
+                <button class="btn btn-danger" (click)="remove(company)">Remove</button>
+              </div>
+            </li>
+          }
+        </ul>
+      }
+    </div>
+
+    @if (discoveredResolved.length > 0) {
+      <div class="card">
+        <h2>Auto-discovered — resolved ({{ discoveredResolved.length }})</h2>
+        <p class="hint">Careers page found automatically. Scraped on every refresh, same as pinned companies.</p>
+        <ul class="company-list">
+          @for (company of discoveredResolved; track company.id) {
+            <li>
+              <div class="company-info">
+                <span class="company-name">
+                  {{ company.name }}
+                  @if (company.ats_type) {
+                    <span class="badge badge-ats">{{ company.ats_type }}</span>
+                  }
+                </span>
+                @if (company.careers_url) {
+                  <a [href]="company.careers_url" target="_blank" rel="noopener">{{ company.careers_url }}</a>
+                }
+              </div>
+              <div class="company-meta">
+                @if (company.last_scraped_at) {
+                  <span class="scraped-at">Last scraped {{ company.last_scraped_at | date: 'short' }}</span>
+                }
+                <button class="btn" (click)="promote(company)">Pin</button>
+              </div>
+            </li>
+          }
+        </ul>
+      </div>
+    }
+
+    @if (discoveredPending.length > 0) {
+      <div class="card">
+        <h2>Auto-discovered — pending ({{ discoveredPending.length }})</h2>
+        <p class="hint">Resolution will be attempted on a future refresh.</p>
+        <ul class="company-list">
+          @for (company of discoveredPending; track company.id) {
+            <li>
+              <div class="company-info">
+                <span class="company-name">{{ company.name }}</span>
+              </div>
+            </li>
+          }
+        </ul>
+      </div>
+    }
+
+    @if (discoveredFailed.length > 0) {
+      <div class="card">
+        <h2>Auto-discovered — no careers page found ({{ discoveredFailed.length }})</h2>
+        <p class="hint">
+          Couldn't verify a real careers page for these, so they aren't scraped. Pin one with a
+          URL yourself if you know it.
+        </p>
+        <ul class="company-list">
+          @for (company of discoveredFailed; track company.id) {
+            <li>
+              <div class="company-info">
+                <span class="company-name">{{ company.name }}</span>
+                <span class="no-url">Resolution failed</span>
+              </div>
+            </li>
+          }
+        </ul>
+      </div>
+    }
+  }
+</div>
