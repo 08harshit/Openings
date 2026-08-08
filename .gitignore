@@ -1,0 +1,27 @@
+node_modules/
+dist/
+build/
+.angular/
+coverage/
+
+# Environment — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Claude Code — local-only settings; can contain permission entries with
+# real tokens/keys typed into ad-hoc commands during a session. Never commit.
+.claude/settings.local.json
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Build caches
+*.tsbuildinfo
+.nest/

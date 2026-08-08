@@ -1,0 +1,25 @@
+{
+  "name": "job-portal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal job portal — Firecrawl scraping + Claude skill-gap scoring + Angular pipeline dashboard",
+  "workspaces": [
+    "packages/shared",
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "build:shared": "npm run build --workspace @jobportal/shared",
+    "build:api": "npm run build --workspace @jobportal/api",
+    "build:web": "npm run build --workspace @jobportal/web",
+    "build": "npm run build:shared && npm run build:api && npm run build:web",
+    "dev:api": "npm run start:dev --workspace @jobportal/api",
+    "dev:web": "npm run start --workspace @jobportal/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}
