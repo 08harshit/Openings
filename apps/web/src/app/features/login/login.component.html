@@ -1,0 +1,48 @@
+<div class="login-page">
+  <form class="card login-card" (ngSubmit)="submit()">
+    <h1>Job Portal</h1>
+    <p class="subtitle">
+      {{ mode() === 'sign-in' ? 'Sign in to your pipeline' : 'Create your account' }}
+    </p>
+
+    @if (error()) {
+      <div class="alert alert-error">{{ error() }}</div>
+    }
+    @if (info()) {
+      <div class="alert alert-info">{{ info() }}</div>
+    }
+
+    <label>
+      Email
+      <input
+        class="input"
+        type="email"
+        name="email"
+        autocomplete="email"
+        [(ngModel)]="email"
+        required
+      />
+    </label>
+
+    <label>
+      Password
+      <input
+        class="input"
+        type="password"
+        name="password"
+        [autocomplete]="mode() === 'sign-in' ? 'current-password' : 'new-password'"
+        [(ngModel)]="password"
+        required
+        minlength="6"
+      />
+    </label>
+
+    <button type="submit" class="btn btn-primary submit-btn" [disabled]="busy()">
+      {{ busy() ? 'Working…' : mode() === 'sign-in' ? 'Sign in' : 'Sign up' }}
+    </button>
+
+    <button type="button" class="btn link-btn" (click)="toggleMode()">
+      {{ mode() === 'sign-in' ? "Don't have an account? Sign up" : 'Already have an account? Sign in' }}
+    </button>
+  </form>
+</div>
