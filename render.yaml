@@ -1,0 +1,87 @@
+# ---------------------------------------------------------------------------
+# Render Blueprint — deploys the NestJS API on Render's free tier.
+#
+# Usage: push this repo to GitHub, then in the Render dashboard choose
+# New -> Blueprint and point it at the repo. Render reads this file and
+# provisions the service below. Fill in the marked env vars afterward under
+# the service's Environment tab — nothing here contains a real credential.
+#
+# The Angular app is a static site and is NOT deployed by this blueprint —
+# see "Frontend hosting" in the root README. It calls this API's public URL,
+# which Render assigns as https://<service-name>.onrender.com.
+# ---------------------------------------------------------------------------
+
+services:
+  - type: web
+    name: job-portal-api
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: apps/api
+    buildCommand: >-
+      cd ../.. &&
+      npm ci &&
+      npm run build --workspace @jobportal/shared &&
+      npm run build --workspace @jobportal/api
+    startCommand: node dist/main.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: CORS_ORIGINS
+        sync: false # set to your deployed Angular origin, e.g. https://your-app.netlify.app
+
+      # --- Supabase — Project Settings -> API ---------------------------
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+
+      # --- Groq — console.groq.com/keys ----------------------------------
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_BASE_URL
+        value: https://api.groq.com
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: GROQ_MAX_TOKENS
+        value: 2048
+
+      # --- Firecrawl — firecrawl.dev -> API Keys --------------------------
+      - key: FIRECRAWL_API_KEY
+        sync: false
+      - key: FIRECRAWL_BASE_URL
+        value: https://api.firecrawl.dev
+      - key: FIRECRAWL_API_VERSION
+        value: v2
+      - key: FIRECRAWL_SEARCH_LIMIT
+        value: 10
+      - key: FIRECRAWL_MAP_LIMIT
+        value: 15
+
+      # --- Ingestion pipeline --------------------------------------------
+      - key: INGEST_CRON
+        value: 0 6,18 * * *
+      - key: INGEST_CRON_ENABLED
+        value: true
+      - key: INGEST_MAX_ANALYSES_PER_RUN
+        value: 40
+      - key: INGEST_MAX_NEW_JOBS_PER_RUN
+        value: 100
+      - key: INGEST_MAX_NEW_COMPANIES_PER_RUN
+        value: 5
+      - key: INGEST_ANALYSIS_CONCURRENCY
+        value: 1
+      - key: INGEST_MAX_POSTING_AGE_DAYS
+        value: 2
+      - key: STALE_APPLICATION_DAYS
+        value: 7
+      - key: INGEST_TRIGGER_TOKEN
+        sync: false
