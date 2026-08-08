@@ -1,0 +1,48 @@
+<div class="overlay" (click)="closed.emit()">
+  <form class="card dialog" (click)="$event.stopPropagation()" (ngSubmit)="save()">
+    <h2>Add job manually</h2>
+
+    @if (error()) {
+      <div class="alert">{{ error() }}</div>
+    }
+
+    <label>
+      Title *
+      <input class="input" name="title" [(ngModel)]="title" required />
+    </label>
+
+    <label>
+      Posting URL *
+      <input class="input" name="url" [(ngModel)]="url" required placeholder="https://…" />
+    </label>
+
+    <div class="row">
+      <label>
+        Company
+        <input class="input" name="companyName" [(ngModel)]="companyName" />
+      </label>
+      <label>
+        Location
+        <input class="input" name="location" [(ngModel)]="location" />
+      </label>
+    </div>
+
+    <label>
+      Description
+      <textarea
+        class="input"
+        name="descriptionRaw"
+        rows="6"
+        [(ngModel)]="descriptionRaw"
+        placeholder="Paste the JD here to get an automatic skill-gap score"
+      ></textarea>
+    </label>
+
+    <div class="actions">
+      <button type="button" class="btn" (click)="closed.emit()">Cancel</button>
+      <button type="submit" class="btn btn-primary" [disabled]="!canSave || saving()">
+        {{ saving() ? 'Saving…' : 'Add job' }}
+      </button>
+    </div>
+  </form>
+</div>

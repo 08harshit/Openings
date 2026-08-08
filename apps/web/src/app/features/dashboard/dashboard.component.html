@@ -1,0 +1,181 @@
+<div class="dashboard">
+  <header class="page-header">
+    <div>
+      <h1>Dashboard</h1>
+      @if (stats(); as s) {
+        <p class="stats-line">
+          {{ s.total }} tracked · {{ s.stale_count }} stale · {{ s.unscored_count }} unscored
+          @if (s.average_match_score !== null) {
+            · avg match {{ s.average_match_score }}%
+          }
+        </p>
+      }
+    </div>
+    <div class="header-actions">
+      <button class="btn" (click)="showAddJob.set(true)">+ Add job</button>
+      <button class="btn btn-primary" (click)="refresh()" [disabled]="refreshing()">
+        {{ refreshing() ? 'Refreshing…' : 'Refresh' }}
+      </button>
+    </div>
+  </header>
+
+  @if (refreshSummary(); as summary) {
+    <div class="card refresh-summary">
+      <strong>Last refresh:</strong>
+      {{ summary.candidates_found }} candidates found ·
+      {{ summary.jobs_inserted }} new ·
+      {{ summary.duplicates_skipped }} duplicates ·
+      {{ summary.jobs_analyzed }} scored
+      @if (summary.errors.length > 0) {
+        <span class="refresh-errors"> · {{ summary.errors.length }} warning(s)</span>
+      }
+    </div>
+  }
+
+  <div class="toolbar card">
+    <input
+      class="input search-input"
+      placeholder="Search title, company, location…"
+      [(ngModel)]="search"
+      (keyup.enter)="applyFilters()"
+    />
+
+    <select class="input" [(ngModel)]="seniority" (change)="applyFilters()">
+      <option value="">Any seniority</option>
+      @for (level of seniorityLevels; track level) {
+        <option [value]="level">{{ level }}</option>
+      }
+    </select>
+
+    <label class="checkbox">
+      <input type="checkbox" [(ngModel)]="staleOnly" (change)="applyFilters()" />
+      Stale only
+    </label>
+    <label class="checkbox">
+      <input type="checkbox" [(ngModel)]="unscoredOnly" (change)="applyFilters()" />
+      Unscored only
+    </label>
+
+    <button class="btn" (click)="applyFilters()">Apply</button>
+
+    <div class="view-toggle">
+      <button class="btn" [class.active]="view() === 'table'" (click)="view.set('table')">Table</button>
+      <button class="btn" [class.active]="view() === 'kanban'" (click)="view.set('kanban')">Kanban</button>
+    </div>
+  </div>
+
+  @if (missingSkill(); as skill) {
+    <div class="filter-pill">
+      Filtering: missing "{{ skill }}"
+      <button class="clear-pill" (click)="clearMissingSkillFilter()">✕</button>
+    </div>
+  }
+
+  @if (loading()) {
+    <p class="loading">Loading…</p>
+  } @else if (jobs().length === 0) {
+    <div class="card empty-state">
+      <p>No jobs match your filters yet.</p>
+      <p class="hint">
+        Try "Refresh" to pull new listings, or "+ Add job" to track one manually.
+      </p>
+    </div>
+  } @else if (view() === 'table') {
+    <div class="card table-wrap">
+      <table class="job-table">
+        <thead>
+          <tr>
+            <th>Role</th>
+            <th>Location</th>
+            <th>Seniority</th>
+            <th>Match</th>
+            <th>Missing skills</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (job of jobs(); track job.id) {
+            <tr (click)="openJob(job.id)">
+              <td>
+                <div class="role-cell">
+                  <span class="role-title">{{ job.title }}</span>
+                  <span class="role-company">{{ job.company_name || '—' }}</span>
+                </div>
+              </td>
+              <td>{{ job.location || '—' }}</td>
+              <td class="seniority-cell">{{ job.seniority_guess }}</td>
+              <td><app-match-badge [score]="job.match_score" /></td>
+              <td class="skills-cell" (click)="$event.stopPropagation()">
+                <app-skill-chips
+                  [skills]="job.missing_skills"
+                  variant="missing"
+                  [max]="4"
+                  (chipClick)="onMissingSkillClick($event)"
+                />
+              </td>
+              <td (click)="$event.stopPropagation()">
+                <div class="status-cell">
+                  <app-status-select
+                    [status]="job.status"
+                    (statusChange)="updateStatus(job, $event)"
+                  />
+                  @if (job.is_stale) {
+                    <span class="stale-dot" title="No status change in a while">Stale</span>
+                  }
+                </div>
+              </td>
+              <td class="actions-cell" (click)="$event.stopPropagation()">
+                <a class="btn btn-sm" [href]="job.url" target="_blank" rel="noopener">Open ↗</a>
+                <button class="btn btn-sm btn-danger" (click)="deleteJob(job, $event)">Remove</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  } @else {
+    <div class="kanban-board">
+      @for (column of kanbanColumns(); track column.status) {
+        <div
+          class="kanban-column"
+          [class.drag-over]="dragOverStatus() === column.status"
+          (dragover)="onDragOver($event, column.status)"
+          (dragleave)="onDragLeave()"
+          (drop)="onDrop($event, column.status)"
+        >
+          <div class="column-header">
+            {{ statusLabels[column.status] }}
+            <span class="column-count">{{ column.jobs.length }}</span>
+          </div>
+          <div class="column-body">
+            @for (job of column.jobs; track job.id) {
+              <div
+                class="kanban-card"
+                draggable="true"
+                (dragstart)="onDragStart($event, job)"
+                (click)="openJob(job.id)"
+              >
+                <div class="kanban-title">{{ job.title }}</div>
+                <div class="kanban-company">{{ job.company_name || '—' }}</div>
+                <div class="kanban-footer">
+                  <app-match-badge [score]="job.match_score" />
+                  @if (job.is_stale) {
+                    <span class="stale-dot">Stale</span>
+                  }
+                </div>
+              </div>
+            }
+            @if (column.jobs.length === 0) {
+              <div class="column-empty">Drop here</div>
+            }
+          </div>
+        </div>
+      }
+    </div>
+  }
+
+  @if (showAddJob()) {
+    <app-add-job-dialog (closed)="showAddJob.set(false)" (created)="onAddJobCreated()" />
+  }
+</div>
