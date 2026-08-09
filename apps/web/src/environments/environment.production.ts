@@ -6,10 +6,7 @@
  */
 export const environment = {
   production: true,
-  // Update after the Render service exists — Render assigns this URL the
-  // first time the "job-portal-api" service deploys. Confirm it under the
-  // service's page (top of the dashboard) rather than assuming this default.
-  apiBaseUrl: 'https://job-portal-api.onrender.com/api',
+  apiBaseUrl: 'https://openings.onrender.com/api',
   // Same Supabase project as apps/web/src/environments/environment.ts — the
   // anon key is safe to ship to the browser by design (RLS-gated).
   supabaseUrl: 'https://nkqszcnefqtvigdumxec.supabase.co',
