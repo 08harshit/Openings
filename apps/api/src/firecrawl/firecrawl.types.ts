@@ -92,7 +92,7 @@ export interface RawJobCandidate {
   locationHint: string | null;
   snippet: string;
   markdown: string | null;
-  source: 'firecrawl_scrape' | 'ats_api';
+  source: 'firecrawl_scrape' | 'ats_api' | 'http_scrape';
   /** yyyy-mm-dd, best-effort extracted from the listing text. Null when no
    * recognisable date signal was found — see common/date.util.ts. */
   postedDateIso: string | null;

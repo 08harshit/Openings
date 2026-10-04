@@ -15,8 +15,10 @@ import { INDIA_SEED_COMPANIES } from '../discovery/seed-companies';
 import { canonicalizeUrl, companyNameFromHost, hostnameOf, isNonCompanyHost, urlHash } from '../common/url.util';
 import { companyFromTitle, guessSeniority, looksLikeRelevantRole, normalizeWhitespace } from '../common/text.util';
 import { isIndiaOrRemote } from '../common/location.util';
+import { ageInDays } from '../common/date.util';
 import { mapWithConcurrency } from '../common/async.util';
 import type { RawJobCandidate } from '../firecrawl/firecrawl.types';
+import { scrapeCareerPage } from '../scraping/career-page-scraper';
 
 interface InsertedJob {
   id: string;
@@ -167,7 +169,7 @@ export class IngestService {
       const { candidates, companiesScraped } = await this.scrapeResolvedCompanies(userId, errors, profile);
 
       const maxNew = this.config.get<number>('ingest.maxNewJobsPerRun', 100);
-      const { inserted, duplicates } = await this.dedupAndInsert(userId, candidates, maxNew);
+      const { inserted, duplicates } = await this.dedupAndInsert(userId, candidates, maxNew, errors);
       this.logActivity(
         userId,
         `Inserted ${inserted.length} new job(s), skipped ${duplicates} duplicate(s)`,
@@ -387,10 +389,28 @@ export class IngestService {
 
   private async scrapeCustomCareerPage(company: Company, profile: CvProfile): Promise<RawJobCandidate[]> {
     if (!company.careers_url) return [];
-    const raw = await this.firecrawl.discoverCompanyJobs(company.careers_url);
-    // discoverCompanyJobs already filters "is this a posting at all" and
-    // freshness; relevance and location are this app's own gate on top.
-    return raw.filter(
+
+    const local = await scrapeCareerPage(company.careers_url, {
+      timeoutMs: this.config.get<number>('scraping.httpTimeoutMs', 30_000),
+      maxLinks: this.config.get<number>('scraping.maxLinksPerCompany', 15),
+      concurrency: this.config.get<number>('scraping.concurrency', 5),
+    });
+
+    // Freshness: discoverCompanyJobs (Firecrawl path, below) already rejects
+    // postings older than maxPostingAgeDays. The local scraper doesn't get
+    // that for free, so it's applied explicitly here before the relevance
+    // filter — a stale posting shouldn't count as a "credible candidate"
+    // that blocks the Firecrawl fallback, and shouldn't be inserted either.
+    const fresh = filterStalePostings(local, this.config.get<number>('ingest.maxPostingAgeDays', 2));
+
+    // Relevance and location are this app's own gate on top of "is this a
+    // posting at all". Applied here (not just at the end) so the fallback
+    // decision below is based on CREDIBLE candidates, not raw count — the
+    // local extractors are permissive enough that a careers page's own
+    // self-link or a "life at our company" sub-page can produce a
+    // non-empty, non-garbage-looking RawJobCandidate that isn't actually a
+    // relevant job. A raw count of 1 in that case must not block Firecrawl.
+    const relevant = fresh.filter(
       (c) =>
         looksLikeRelevantRole(
           c.title,
@@ -400,6 +420,25 @@ export class IngestService {
           profile.excluded_departments,
         ) && isIndiaOrRemote(c.locationHint, profile.preferred_locations),
     );
+
+    if (shouldFallBackToFirecrawl(relevant)) {
+      const raw = await this.firecrawl.discoverCompanyJobs(company.careers_url);
+      // discoverCompanyJobs already filters "is this a posting at all" and
+      // freshness; relevance and location are this app's own gate on top,
+      // applied here identically to the local path above.
+      return raw.filter(
+        (c) =>
+          looksLikeRelevantRole(
+            c.title,
+            null,
+            profile.target_roles,
+            profile.excluded_roles,
+            profile.excluded_departments,
+          ) && isIndiaOrRemote(c.locationHint, profile.preferred_locations),
+      );
+    }
+
+    return relevant;
   }
 
   // ---------------------------------------------------------------------
@@ -410,6 +449,7 @@ export class IngestService {
     userId: string,
     scoped: CompanyScopedCandidate[],
     maxNew: number,
+    errors: string[],
   ): Promise<{ inserted: InsertedJob[]; duplicates: number }> {
     if (scoped.length === 0) return { inserted: [], duplicates: 0 };
 
@@ -437,7 +477,7 @@ export class IngestService {
 
     const inserted: InsertedJob[] = [];
     for (const [hash, item] of fresh) {
-      const row = await this.insertOne(userId, hash, item);
+      const row = await this.insertOne(userId, hash, item, errors);
       if (row) inserted.push(row);
     }
 
@@ -448,6 +488,7 @@ export class IngestService {
     userId: string,
     hash: string,
     item: CompanyScopedCandidate,
+    errors: string[],
   ): Promise<InsertedJob | null> {
     const { candidate, companyId, companyName } = item;
     const description = normalizeWhitespace(candidate.markdown ?? candidate.snippet ?? '');
@@ -480,9 +521,17 @@ export class IngestService {
       .maybeSingle();
 
     if (result.error) {
-      // 23505 = unique_violation, almost certainly the (company, title) index.
+      // 23505 = unique_violation, almost certainly the (company, title) index —
+      // an expected, benign dedup case, not a real failure worth surfacing.
       if ((result.error as { code?: string }).code === '23505') return null;
-      this.logger.warn(`Insert failed for "${candidate.title}": ${result.error.message}`);
+      const message = describeInsertError(candidate.title, result.error);
+      this.logger.warn(message);
+      // Any OTHER DB error (e.g. a CHECK-constraint violation from a
+      // migration — like 0007_http_scrape_source.sql — not yet applied to
+      // the live database) would otherwise fail silently from the user's
+      // point of view: nothing shows up in the run's errors[] the dashboard
+      // surfaces. Push it there too.
+      errors.push(message);
       return null;
     }
     if (!result.data) return null;
@@ -605,6 +654,54 @@ function extractCompanyName(result: { title: string; url: string; description: s
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Human-readable message for a non-23505 insertOne() DB error, surfaced in
+ * the run's errors[] array so it isn't silently swallowed (e.g. a CHECK
+ * constraint rejecting an 'http_scrape' source before its migration has
+ * been applied). Pulled out as its own function so the message format is
+ * directly unit-testable. */
+export function describeInsertError(title: string, error: { message: string; code?: string }): string {
+  return `Insert failed for "${title}": ${error.message}`;
+}
+
+/**
+ * Zero CREDIBLE local candidates is the trigger to fall back to Firecrawl —
+ * pulled out as its own function so the decision itself (not just its
+ * consequence) is directly unit-testable without standing up the full
+ * IngestService dependency graph.
+ *
+ * Takes already-relevance/location-filtered candidates, not the raw scrape
+ * result. Judgment call: an earlier draft of this function took the raw
+ * local candidates and used `.length === 0` as the sole signal, but
+ * `looksLikeJobPosting()`/the generic Cheerio extractor are permissive
+ * enough that a careers page's own self-link or a "life at our company"
+ * sub-page can produce a non-empty, non-garbage-looking RawJobCandidate
+ * that isn't actually a job — which blocked the Firecrawl fallback entirely
+ * even though zero real postings were found. Checking "does a FILTERED
+ * candidate survive" fixes that without needing to distinguish JSON-LD-
+ * sourced from generic-extractor-sourced candidates (both currently share
+ * the 'http_scrape' source tag) — the simpler, safer option.
+ */
+export function shouldFallBackToFirecrawl(filteredLocalCandidates: RawJobCandidate[]): boolean {
+  return filteredLocalCandidates.length === 0;
+}
+
+/**
+ * Drops any candidate whose `postedDateIso` is parseable and older than
+ * `maxAgeDays` — mirrors the freshness bar `FirecrawlService.scrapePage()`
+ * already applies (see firecrawl.service.ts's `isTooOld`), which the local
+ * scraper path did not have until this function existed. A null/unparseable
+ * date is KEPT, not rejected — same policy as the Firecrawl path: "unknown"
+ * isn't evidence of staleness.
+ */
+export function filterStalePostings(candidates: RawJobCandidate[], maxAgeDays: number): RawJobCandidate[] {
+  return candidates.filter((c) => {
+    if (!c.postedDateIso) return true;
+    const parsed = new Date(c.postedDateIso);
+    if (Number.isNaN(parsed.getTime())) return true;
+    return ageInDays(parsed) <= maxAgeDays;
+  });
 }
 
 /** Case-insensitive exact-name match against the candidate's excluded-companies list. */

@@ -78,6 +78,7 @@ export const JOB_SOURCES = [
   'firecrawl_search',
   'firecrawl_scrape',
   'ats_api',
+  'http_scrape',
   'manual',
 ] as const;
 export type JobSource = (typeof JOB_SOURCES)[number];
