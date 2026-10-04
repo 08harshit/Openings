@@ -205,64 +205,6 @@ export function extractLocation(text: string | null | undefined): string | null 
   return null;
 }
 
-/** Departments that are never backend/full-stack engineering, regardless of
- * how the title reads — checked first since it's the stronger signal when
- * an ATS provides it. */
-const NON_ENGINEERING_DEPARTMENTS = [
-  'sales', 'marketing', 'people', 'hr', 'human resources', 'finance',
-  'legal', 'design', 'customer success', 'customer support', 'support',
-  'operations', 'recruiting', 'talent', 'business development', 'bd',
-  'account management', 'partnerships', 'content', 'communications',
-  'product management', // adjacent but not engineering — excluded deliberately
-];
-
-/** Roles that are technical but outside this app's target (Backend Engineer
- * primary, Full Stack secondary) — excluded even though the title contains
- * "engineer". */
-const OFF_TARGET_TITLE_MARKERS = [
-  'sales engineer',
-  'support engineer',
-  'solutions engineer',
-  'field engineer',
-  'hardware engineer',
-  'mechanical engineer',
-  'electrical engineer',
-  'civil engineer',
-  'network engineer',
-  'security engineer', // adjacent, but not the stated primary/secondary target
-  'data engineer', // adjacent, but not the stated primary/secondary target
-  'ml engineer',
-  'machine learning engineer',
-  'ai engineer',
-  'qa engineer',
-  'test engineer',
-  'ios engineer',
-  'android engineer',
-  'mobile engineer',
-  'frontend engineer', // frontend-only — full-stack is in scope, pure frontend isn't
-  'front-end engineer',
-  'front end engineer',
-  'site reliability',
-  'devops engineer', // adjacent, but not the stated primary/secondary target
-  'platform engineer',
-  'embedded engineer',
-  // Native-platform roles that don't pair "engineer" adjacent to the
-  // platform name (e.g. "Software Engineer, Android", "Software Engineer -
-  // iOS") — the "X engineer" markers above miss this word order.
-  'ios', 'android', 'react native', 'flutter',
-];
-
-const RELEVANT_TITLE_MARKERS = [
-  'backend', 'back end', 'back-end',
-  'full stack', 'fullstack', 'full-stack',
-  'software engineer', 'software developer',
-  'sde', 'swe',
-  'node.js', 'nodejs', 'node',
-  'nestjs', 'nest.js',
-  'api engineer',
-  'server-side', 'server side',
-];
-
 /** Escape a string for safe use inside a regex. */
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -274,9 +216,16 @@ function escapeRegex(s: string): string {
  * Development Representative (Swedish Speaking)") once slipped past this
  * filter. Every marker in the lists below starts and ends on a word
  * character, so `\b` boundaries are safe on both sides.
+ *
+ * A blank/whitespace-only marker is treated as never matching, not as a
+ * wildcard — `new RegExp('\\b\\b')` matches any word character, which would
+ * otherwise turn one stray empty string in a profile's target_roles into
+ * "accept every job," or one in excluded_roles into "reject every job."
  */
 function containsWord(haystack: string, marker: string): boolean {
-  return new RegExp(`\\b${escapeRegex(marker.trim())}\\b`, 'i').test(haystack);
+  const trimmed = marker.trim();
+  if (!trimmed) return false;
+  return new RegExp(`\\b${escapeRegex(trimmed)}\\b`, 'i').test(haystack);
 }
 
 /**
@@ -285,13 +234,24 @@ function containsWord(haystack: string, marker: string): boolean {
  * just engineering. `department` (when an ATS provides one) is checked
  * first as the stronger signal; title keywords are the fallback for
  * companies without a structured department field.
+ *
+ * `targetRoles`/`excludedRoles`/`excludedDepartments` come from the
+ * candidate's profile (see CvProfile in packages/shared) — this function no
+ * longer hardcodes them, so an empty `targetRoles` list means "nothing is
+ * relevant," not "everything is."
  */
-export function looksLikeRelevantRole(title: string, department?: string | null): boolean {
-  if (department && NON_ENGINEERING_DEPARTMENTS.some((marker) => containsWord(department, marker))) {
+export function looksLikeRelevantRole(
+  title: string,
+  department: string | null | undefined,
+  targetRoles: readonly string[],
+  excludedRoles: readonly string[],
+  excludedDepartments: readonly string[],
+): boolean {
+  if (department && excludedDepartments.some((marker) => containsWord(department, marker))) {
     return false;
   }
 
-  if (OFF_TARGET_TITLE_MARKERS.some((marker) => containsWord(title, marker))) return false;
+  if (excludedRoles.some((marker) => containsWord(title, marker))) return false;
 
-  return RELEVANT_TITLE_MARKERS.some((marker) => containsWord(title, marker));
+  return targetRoles.some((marker) => containsWord(title, marker));
 }

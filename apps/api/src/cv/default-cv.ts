@@ -1,5 +1,51 @@
 import type { ProficiencyLevel } from '@jobportal/shared';
 
+/** Seeded from the old RELEVANT_TITLE_MARKERS constant in text.util.ts. */
+const DEFAULT_TARGET_ROLES = [
+  'backend', 'back end', 'back-end',
+  'full stack', 'fullstack', 'full-stack',
+  'software engineer', 'software developer',
+  'sde', 'swe',
+  'node.js', 'nodejs', 'node',
+  'nestjs', 'nest.js',
+  'api engineer',
+  'server-side', 'server side',
+];
+
+/** Seeded from the old OFF_TARGET_TITLE_MARKERS constant in text.util.ts. */
+const DEFAULT_EXCLUDED_ROLES = [
+  'sales engineer', 'support engineer', 'solutions engineer',
+  'field engineer', 'hardware engineer', 'mechanical engineer',
+  'electrical engineer', 'civil engineer', 'network engineer',
+  'security engineer', 'data engineer', 'ml engineer',
+  'machine learning engineer', 'ai engineer', 'qa engineer',
+  'test engineer', 'ios engineer', 'android engineer',
+  'mobile engineer', 'frontend engineer', 'front-end engineer',
+  'front end engineer', 'site reliability', 'devops engineer',
+  'platform engineer', 'embedded engineer',
+  'ios', 'android', 'react native', 'flutter',
+];
+
+/** Seeded from the old NON_ENGINEERING_DEPARTMENTS constant in text.util.ts. */
+const DEFAULT_EXCLUDED_DEPARTMENTS = [
+  'sales', 'marketing', 'people', 'hr', 'human resources', 'finance',
+  'legal', 'design', 'customer success', 'customer support', 'support',
+  'operations', 'recruiting', 'talent', 'business development', 'bd',
+  'account management', 'partnerships', 'content', 'communications',
+  'product management',
+];
+
+/** Seeded from the old INDIA_PLACE_MARKERS + REMOTE_MARKERS constants in location.util.ts. */
+const DEFAULT_PREFERRED_LOCATIONS = [
+  'india',
+  'bangalore', 'bengaluru', 'mumbai', 'bombay', 'delhi', 'new delhi', 'ncr',
+  'gurgaon', 'gurugram', 'noida', 'pune', 'hyderabad', 'chennai', 'madras',
+  'kolkata', 'calcutta', 'ahmedabad', 'kochi', 'cochin', 'coimbatore',
+  'jaipur', 'chandigarh', 'indore', 'thane', 'navi mumbai',
+  ' in)', '(in)', ', in',
+  'remote', 'work from home', 'wfh', 'anywhere', 'distributed team', 'fully distributed',
+];
+
 /**
  * Baseline CV used to bootstrap a brand-new account, so the skill-gap engine
  * has something to score against on day one instead of matching every job at 0.
@@ -10,6 +56,18 @@ import type { ProficiencyLevel } from '@jobportal/shared';
 export const DEFAULT_CV = {
   currentTitle: 'Backend-Focused Full Stack Developer',
   experienceYears: 2.2,
+
+  targetRoles: DEFAULT_TARGET_ROLES,
+  excludedRoles: DEFAULT_EXCLUDED_ROLES,
+  excludedDepartments: DEFAULT_EXCLUDED_DEPARTMENTS,
+  preferredLocations: DEFAULT_PREFERRED_LOCATIONS,
+  excludedCompanies: [] as string[],
+  seniorityMinYears: null as number | null,
+  seniorityMaxYears: null as number | null,
+  workModes: [] as string[],
+  employmentTypes: [] as string[],
+  domainPreferences: [] as string[],
+  domainExclusions: [] as string[],
 
   rawText: `Harshit Sen — Backend-Focused Full Stack Developer
 

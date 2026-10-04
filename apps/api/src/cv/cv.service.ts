@@ -60,6 +60,17 @@ export class CvService {
         raw_cv_text: DEFAULT_CV.rawText,
         experience_years: DEFAULT_CV.experienceYears,
         current_title: DEFAULT_CV.currentTitle,
+        target_roles: DEFAULT_CV.targetRoles,
+        excluded_roles: DEFAULT_CV.excludedRoles,
+        excluded_departments: DEFAULT_CV.excludedDepartments,
+        preferred_locations: DEFAULT_CV.preferredLocations,
+        excluded_companies: DEFAULT_CV.excludedCompanies,
+        seniority_min_years: DEFAULT_CV.seniorityMinYears,
+        seniority_max_years: DEFAULT_CV.seniorityMaxYears,
+        work_modes: DEFAULT_CV.workModes,
+        employment_types: DEFAULT_CV.employmentTypes,
+        domain_preferences: DEFAULT_CV.domainPreferences,
+        domain_exclusions: DEFAULT_CV.domainExclusions,
       })
       .select('*')
       .single();
@@ -122,6 +133,17 @@ export class CvService {
     if (dto.raw_cv_text !== undefined) patch.raw_cv_text = dto.raw_cv_text;
     if (dto.experience_years !== undefined) patch.experience_years = dto.experience_years;
     if (dto.current_title !== undefined) patch.current_title = dto.current_title;
+    if (dto.target_roles !== undefined) patch.target_roles = dto.target_roles;
+    if (dto.excluded_roles !== undefined) patch.excluded_roles = dto.excluded_roles;
+    if (dto.excluded_departments !== undefined) patch.excluded_departments = dto.excluded_departments;
+    if (dto.preferred_locations !== undefined) patch.preferred_locations = dto.preferred_locations;
+    if (dto.excluded_companies !== undefined) patch.excluded_companies = dto.excluded_companies;
+    if (dto.seniority_min_years !== undefined) patch.seniority_min_years = dto.seniority_min_years;
+    if (dto.seniority_max_years !== undefined) patch.seniority_max_years = dto.seniority_max_years;
+    if (dto.work_modes !== undefined) patch.work_modes = dto.work_modes;
+    if (dto.employment_types !== undefined) patch.employment_types = dto.employment_types;
+    if (dto.domain_preferences !== undefined) patch.domain_preferences = dto.domain_preferences;
+    if (dto.domain_exclusions !== undefined) patch.domain_exclusions = dto.domain_exclusions;
 
     const result = await this.supabase.admin
       .from('cv_profile')
