@@ -93,9 +93,22 @@ export function ageInDays(date: Date, reference: Date = new Date()): number {
   return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
 }
 
-/** yyyy-mm-dd for storage in job_postings.posted_date. */
+/**
+ * yyyy-mm-dd for storage in job_postings.posted_date.
+ *
+ * Formats from the Date's LOCAL calendar fields, not a UTC conversion.
+ * `parsePostedDate()` constructs its Date via local fields (`new Date(y, m,
+ * d)`), so reading it back with `toISOString()` (which converts to UTC
+ * first) silently shifts the formatted date backward by one day in any
+ * timezone ahead of UTC (e.g. IST, UTC+5:30) — confirmed empirically via
+ * actual Node execution in an IST environment. Reading the local fields
+ * back out keeps the round-trip stable everywhere.
+ */
 export function toDateOnlyIso(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function addDays(date: Date, days: number): Date {

@@ -1,5 +1,6 @@
 import { extractJob } from './job-extractor';
 import * as fetcher from './http-page-fetcher';
+import * as jsonLdExtractor from './json-ld-extractor';
 
 describe('extractJob', () => {
   afterEach(() => {
@@ -61,6 +62,26 @@ describe('extractJob', () => {
     });
 
     const result = await extractJob('https://acme.com/life', 5000);
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null (defense-in-depth) rather than throwing if extractJsonLdJobPosting throws', async () => {
+    // M1/Fix 5: extractJob must never let an extractor's throw propagate
+    // past its own boundary — an unanticipated crash in either extraction
+    // strategy should degrade to "drop this one link", not fail the whole
+    // company's scrape (which would skip the Firecrawl fallback entirely).
+    jest.spyOn(fetcher, 'fetchPage').mockResolvedValue({
+      url: 'https://acme.com/careers/x',
+      status: 200,
+      contentType: 'text/html',
+      html: '<html><body>irrelevant</body></html>',
+    });
+    jest.spyOn(jsonLdExtractor, 'extractJsonLdJobPosting').mockImplementation(() => {
+      throw new Error('unexpected crash deep in JSON-LD parsing');
+    });
+
+    const result = await extractJob('https://acme.com/careers/x', 5000);
 
     expect(result).toBeNull();
   });

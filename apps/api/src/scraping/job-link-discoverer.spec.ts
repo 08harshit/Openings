@@ -52,4 +52,28 @@ describe('discoverJobLinks', () => {
 
     expect(links).toEqual([]);
   });
+
+  it('excludes the careers page\'s own self-link even if it looks job-shaped', () => {
+    const html = `<html><body>
+      <a href="/careers">Careers</a>
+      <a href="/careers/backend-engineer-123">Backend Engineer</a>
+    </body></html>`;
+    const links = discoverJobLinks(html, 'https://acme.com/careers', 10);
+    const urls = links.map((l) => l.url);
+
+    expect(urls).not.toContain('https://acme.com/careers');
+    expect(urls).toContain('https://acme.com/careers/backend-engineer-123');
+  });
+
+  it('excludes a fragment-only self-link variant of the careers page', () => {
+    const html = `<html><body>
+      <a href="/careers#open-roles">Open Roles</a>
+      <a href="/careers/backend-engineer-123">Backend Engineer</a>
+    </body></html>`;
+    const links = discoverJobLinks(html, 'https://acme.com/careers', 10);
+    const urls = links.map((l) => l.url);
+
+    expect(urls).not.toContain('https://acme.com/careers#open-roles');
+    expect(urls).toContain('https://acme.com/careers/backend-engineer-123');
+  });
 });

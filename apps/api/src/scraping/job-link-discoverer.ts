@@ -18,6 +18,7 @@ export function discoverJobLinks(html: string, baseUrl: string, maxLinks: number
   const $ = cheerio.load(html);
   const seen = new Set<string>();
   const results: DiscoveredLink[] = [];
+  const canonicalBase = canonicalizeUrl(baseUrl);
 
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
@@ -36,6 +37,12 @@ export function discoverJobLinks(html: string, baseUrl: string, maxLinks: number
     if (!looksLikeJobPosting(text, url)) return;
 
     const canonical = canonicalizeUrl(url);
+    // The careers page's own self-link (including fragment-only variants
+    // like "/careers#open-roles", since canonicalizeUrl strips the hash)
+    // is not a "discovered job link" — it's the page we're already on.
+    // Without this, a careers index page that links to itself (a common
+    // "back to top" or anchor-nav pattern) would produce a fake candidate.
+    if (canonical === canonicalBase) return;
     if (seen.has(canonical)) return;
     seen.add(canonical);
 
