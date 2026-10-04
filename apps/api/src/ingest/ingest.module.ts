@@ -4,6 +4,7 @@ import { FirecrawlModule } from '../firecrawl/firecrawl.module';
 import { AnalysisModule } from '../analysis/analysis.module';
 import { CompaniesModule } from '../companies/companies.module';
 import { DiscoveryModule } from '../discovery/discovery.module';
+import { CvModule } from '../cv/cv.module';
 import { IngestController } from './ingest.controller';
 import { IngestService } from './ingest.service';
 import { IngestScheduler } from './ingest.scheduler';
@@ -15,6 +16,7 @@ import { IngestScheduler } from './ingest.scheduler';
     AnalysisModule,
     CompaniesModule,
     DiscoveryModule,
+    CvModule,
   ],
   controllers: [IngestController],
   providers: [IngestService, IngestScheduler],

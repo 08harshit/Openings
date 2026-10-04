@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Company, IngestRunSummary } from '@jobportal/shared';
+import type { Company, CvProfile, IngestRunSummary } from '@jobportal/shared';
 import { randomUUID } from 'node:crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import { FirecrawlService } from '../firecrawl/firecrawl.service';
@@ -8,6 +8,7 @@ import { AnalysisService } from '../analysis/analysis.service';
 import { CompaniesService } from '../companies/companies.service';
 import { SkillsService } from '../skills/skills.service';
 import { CompanyResolverService } from '../discovery/company-resolver.service';
+import { CvService } from '../cv/cv.service';
 import { fetchAtsJobs } from '../discovery/ats-clients';
 import { COMPANY_DISCOVERY_QUERIES } from '../discovery/discovery-queries';
 import { INDIA_SEED_COMPANIES } from '../discovery/seed-companies';
@@ -52,6 +53,7 @@ export class IngestService {
     private readonly skills: SkillsService,
     private readonly resolver: CompanyResolverService,
     private readonly config: ConfigService,
+    private readonly cv: CvService,
   ) {}
 
   /**
@@ -74,8 +76,10 @@ export class IngestService {
 
       this.logger.log(`[${runId}] Ingestion run starting for user ${userId}`);
 
-      const discovery = await this.discoverCompanies(userId, errors);
-      const { candidates, companiesScraped } = await this.scrapeResolvedCompanies(userId, errors);
+      const { profile } = await this.cv.getSnapshot(userId);
+
+      const discovery = await this.discoverCompanies(userId, errors, profile);
+      const { candidates, companiesScraped } = await this.scrapeResolvedCompanies(userId, errors, profile);
 
       const maxNew = this.config.get<number>('ingest.maxNewJobsPerRun', 100);
       const { inserted, duplicates } = await this.dedupAndInsert(userId, candidates, maxNew);
@@ -135,6 +139,7 @@ export class IngestService {
   private async discoverCompanies(
     userId: string,
     errors: string[],
+    profile: CvProfile,
   ): Promise<{ discovered: number; resolved: number; failed: number }> {
     const known = await this.companies.getKnownNormalizedNames(userId);
     const candidateNames = new Map<string, string>(); // normalized -> display name
@@ -168,7 +173,9 @@ export class IngestService {
     }
 
     const maxNewCompanies = this.config.get<number>('ingest.maxNewCompaniesPerRun', 5);
-    const toResolve = [...candidateNames.values()].slice(0, maxNewCompanies);
+    const toResolve = [...candidateNames.values()]
+      .filter((name) => !isExcludedCompany(name, profile.excluded_companies))
+      .slice(0, maxNewCompanies);
 
     let resolved = 0;
     let failed = 0;
@@ -194,6 +201,7 @@ export class IngestService {
   private async scrapeResolvedCompanies(
     userId: string,
     errors: string[],
+    profile: CvProfile,
   ): Promise<{ candidates: CompanyScopedCandidate[]; companiesScraped: number }> {
     const toScrape = await this.companies.listScrapable(userId);
     const candidates: CompanyScopedCandidate[] = [];
@@ -203,8 +211,8 @@ export class IngestService {
       try {
         const raw =
           company.ats_type && company.ats_board_token
-            ? await this.scrapeAtsCompany(company)
-            : await this.scrapeCustomCareerPage(company);
+            ? await this.scrapeAtsCompany(company, profile)
+            : await this.scrapeCustomCareerPage(company, profile);
 
         for (const candidate of raw) {
           candidates.push({ candidate, companyId: company.id, companyName: company.name });
@@ -222,7 +230,7 @@ export class IngestService {
     return { candidates, companiesScraped };
   }
 
-  private async scrapeAtsCompany(company: Company): Promise<RawJobCandidate[]> {
+  private async scrapeAtsCompany(company: Company, profile: CvProfile): Promise<RawJobCandidate[]> {
     const listings = await fetchAtsJobs(company.ats_type!, company.ats_board_token!);
 
     // No freshness filter here, deliberately: an ATS board only ever lists
@@ -234,8 +242,16 @@ export class IngestService {
     // weeks would fail a "posted in the last N days" check even though it's
     // exactly the kind of live opening this app exists to surface.
     return listings
-      .filter((listing) => looksLikeRelevantRole(listing.title, listing.department))
-      .filter((listing) => isIndiaOrRemote(listing.location))
+      .filter((listing) =>
+        looksLikeRelevantRole(
+          listing.title,
+          listing.department,
+          profile.target_roles,
+          profile.excluded_roles,
+          profile.excluded_departments,
+        ),
+      )
+      .filter((listing) => isIndiaOrRemote(listing.location, profile.preferred_locations))
       .map(
         (listing): RawJobCandidate => ({
           title: listing.title,
@@ -250,12 +266,21 @@ export class IngestService {
       );
   }
 
-  private async scrapeCustomCareerPage(company: Company): Promise<RawJobCandidate[]> {
+  private async scrapeCustomCareerPage(company: Company, profile: CvProfile): Promise<RawJobCandidate[]> {
     if (!company.careers_url) return [];
     const raw = await this.firecrawl.discoverCompanyJobs(company.careers_url);
     // discoverCompanyJobs already filters "is this a posting at all" and
     // freshness; relevance and location are this app's own gate on top.
-    return raw.filter((c) => looksLikeRelevantRole(c.title) && isIndiaOrRemote(c.locationHint));
+    return raw.filter(
+      (c) =>
+        looksLikeRelevantRole(
+          c.title,
+          null,
+          profile.target_roles,
+          profile.excluded_roles,
+          profile.excluded_departments,
+        ) && isIndiaOrRemote(c.locationHint, profile.preferred_locations),
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -461,4 +486,10 @@ function extractCompanyName(result: { title: string; url: string; description: s
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Case-insensitive exact-name match against the candidate's excluded-companies list. */
+export function isExcludedCompany(name: string, excludedCompanies: readonly string[]): boolean {
+  const normalized = name.trim().toLowerCase();
+  return excludedCompanies.some((excluded) => excluded.trim().toLowerCase() === normalized);
 }
