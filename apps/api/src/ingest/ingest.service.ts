@@ -17,6 +17,7 @@ import { companyFromTitle, guessSeniority, looksLikeRelevantRole, normalizeWhite
 import { isIndiaOrRemote } from '../common/location.util';
 import { mapWithConcurrency } from '../common/async.util';
 import type { RawJobCandidate } from '../firecrawl/firecrawl.types';
+import { scrapeCareerPage } from '../scraping/career-page-scraper';
 
 interface InsertedJob {
   id: string;
@@ -387,9 +388,21 @@ export class IngestService {
 
   private async scrapeCustomCareerPage(company: Company, profile: CvProfile): Promise<RawJobCandidate[]> {
     if (!company.careers_url) return [];
-    const raw = await this.firecrawl.discoverCompanyJobs(company.careers_url);
+
+    let raw = await scrapeCareerPage(company.careers_url, {
+      timeoutMs: this.config.get<number>('scraping.httpTimeoutMs', 30_000),
+      maxLinks: this.config.get<number>('scraping.maxLinksPerCompany', 15),
+      concurrency: this.config.get<number>('scraping.concurrency', 5),
+    });
+
+    if (shouldFallBackToFirecrawl(raw)) {
+      raw = await this.firecrawl.discoverCompanyJobs(company.careers_url);
+    }
+
     // discoverCompanyJobs already filters "is this a posting at all" and
     // freshness; relevance and location are this app's own gate on top.
+    // The local scraper's own extractors apply the same bar implicitly (too
+    // little signal returns null, dropped before this point).
     return raw.filter(
       (c) =>
         looksLikeRelevantRole(
@@ -605,6 +618,14 @@ function extractCompanyName(result: { title: string; url: string; description: s
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** A local-scrape result of zero candidates is the trigger to fall back to
+ * Firecrawl — pulled out as its own function so the decision itself (not
+ * just its consequence) is directly unit-testable without standing up the
+ * full IngestService dependency graph. */
+export function shouldFallBackToFirecrawl(localCandidates: RawJobCandidate[]): boolean {
+  return localCandidates.length === 0;
 }
 
 /** Case-insensitive exact-name match against the candidate's excluded-companies list. */

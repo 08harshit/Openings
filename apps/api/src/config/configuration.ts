@@ -71,6 +71,11 @@ export interface AppConfig {
     maxPostingAgeDays: number;
   };
   staleApplicationDays: number;
+  scraping: {
+    httpTimeoutMs: number;
+    maxLinksPerCompany: number;
+    concurrency: number;
+  };
 }
 
 export default (): AppConfig => ({
@@ -120,4 +125,10 @@ export default (): AppConfig => ({
   },
 
   staleApplicationDays: int('STALE_APPLICATION_DAYS', 7),
+
+  scraping: {
+    httpTimeoutMs: int('SCRAPING_HTTP_TIMEOUT_MS', 30_000),
+    maxLinksPerCompany: int('SCRAPING_MAX_LINKS_PER_COMPANY', 15),
+    concurrency: int('SCRAPING_CONCURRENCY', 5),
+  },
 });

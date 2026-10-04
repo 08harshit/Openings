@@ -1,4 +1,9 @@
-import { describeEmptyProfileWarning, filterOutExcludedCompanies, isExcludedCompany } from './ingest.service';
+import {
+  describeEmptyProfileWarning,
+  filterOutExcludedCompanies,
+  isExcludedCompany,
+  shouldFallBackToFirecrawl,
+} from './ingest.service';
 
 describe('company exclusion filtering', () => {
   it('excludes a company matching an excluded name case-insensitively', () => {
@@ -42,5 +47,28 @@ describe('describeEmptyProfileWarning', () => {
 
   it('returns null when both lists are populated', () => {
     expect(describeEmptyProfileWarning({ target_roles: ['backend'], preferred_locations: ['india'] })).toBeNull();
+  });
+});
+
+describe('shouldFallBackToFirecrawl', () => {
+  it('falls back when the local scraper found zero candidates', () => {
+    expect(shouldFallBackToFirecrawl([])).toBe(true);
+  });
+
+  it('does not fall back when the local scraper found at least one candidate', () => {
+    expect(
+      shouldFallBackToFirecrawl([
+        {
+          title: 'Backend Engineer',
+          url: 'https://acme.com/careers/1',
+          companyNameHint: null,
+          locationHint: null,
+          snippet: '',
+          markdown: null,
+          source: 'http_scrape',
+          postedDateIso: null,
+        },
+      ]),
+    ).toBe(false);
   });
 });
