@@ -2,12 +2,13 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import type { Observable } from 'rxjs';
 import type {
+  ApiUsageSnapshot,
   ApplicationNote,
   Company,
   CompanySource,
   CvProfile,
   CvSkillDetail,
-  IngestRunSummary,
+  IngestRunStatus,
   JobDetail,
   JobListItem,
   JobPosting,
@@ -150,7 +151,17 @@ export class ApiService {
   }
 
   // --- Ingestion ---------------------------------------------------------
-  refresh(): Observable<IngestRunSummary> {
-    return this.http.post<IngestRunSummary>(`${this.base}/ingest/refresh`, {});
+  /** Starts a background run; returns immediately with its initial status. */
+  refresh(): Observable<IngestRunStatus> {
+    return this.http.post<IngestRunStatus>(`${this.base}/ingest/refresh`, {});
+  }
+
+  ingestStatus(): Observable<IngestRunStatus> {
+    return this.http.get<IngestRunStatus>(`${this.base}/ingest/status`);
+  }
+
+  // --- Usage / quota -------------------------------------------------------
+  getUsage(): Observable<ApiUsageSnapshot> {
+    return this.http.get<ApiUsageSnapshot>(`${this.base}/usage`);
   }
 }

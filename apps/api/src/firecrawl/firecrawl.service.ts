@@ -10,6 +10,7 @@ import {
 import { companyNameFromHost, hostnameOf, isNonCompanyHost } from '../common/url.util';
 import { parsePostedDate, toDateOnlyIso } from '../common/date.util';
 import type {
+  FirecrawlCreditUsage,
   FirecrawlMapResponse,
   FirecrawlScrapeResponse,
   FirecrawlSearchResponse,
@@ -43,6 +44,47 @@ export class FirecrawlService {
 
   get isConfigured(): boolean {
     return this.apiKey.length > 0;
+  }
+
+  private creditUsageCache: { fetchedAt: number; data: FirecrawlCreditUsage } | null = null;
+
+  /**
+   * Remaining/plan credits for the team, from Firecrawl's dedicated billing
+   * endpoint — not derivable from scrape/map/search response headers.
+   * Cached briefly since the dashboard polls this during a live ingestion
+   * run and the number only ever changes once per Firecrawl call anyway.
+   */
+  async getCreditUsage(): Promise<FirecrawlCreditUsage | null> {
+    if (!this.isConfigured) return null;
+
+    const cacheTtlMs = 30_000;
+    if (this.creditUsageCache && Date.now() - this.creditUsageCache.fetchedAt < cacheTtlMs) {
+      return this.creditUsageCache.data;
+    }
+
+    try {
+      const res = await fetch(`${this.baseUrl}/team/credit-usage`, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+      });
+      if (!res.ok) {
+        this.logger.warn(`Firecrawl credit-usage failed (${res.status})`);
+        return this.creditUsageCache?.data ?? null;
+      }
+
+      const body = (await res.json()) as { data?: { remainingCredits?: number; planCredits?: number } };
+      if (typeof body.data?.remainingCredits !== 'number') return null;
+
+      const data: FirecrawlCreditUsage = {
+        remaining_credits: body.data.remainingCredits,
+        plan_credits: body.data.planCredits ?? null,
+        observed_at: new Date().toISOString(),
+      };
+      this.creditUsageCache = { fetchedAt: Date.now(), data };
+      return data;
+    } catch (error) {
+      this.logger.warn(`Firecrawl credit-usage request failed: ${error instanceof Error ? error.message : error}`);
+      return this.creditUsageCache?.data ?? null;
+    }
   }
 
   /**

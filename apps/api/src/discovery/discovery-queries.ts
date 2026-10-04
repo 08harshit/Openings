@@ -5,7 +5,7 @@
  * company's own career page (see company-resolver.service.ts).
  *
  * Scoped to the target role definition (Backend Engineer primary, Full Stack
- * secondary, entry-mid level) and to India / Remote, per the plan. Edit
+ * secondary, 2+ years experience) and to India / Remote, per the plan. Edit
  * freely — each entry costs one Firecrawl search call per ingestion run,
  * same as before.
  */
@@ -16,4 +16,5 @@ export const COMPANY_DISCOVERY_QUERIES: string[] = [
   'series A series B startups hiring backend engineers India',
   'remote-first companies hiring backend engineers India',
   'product companies bangalore hiring backend engineer nodejs',
+  'fintech companies hiring backend engineers India payments',
 ];

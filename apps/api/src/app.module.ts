@@ -12,6 +12,7 @@ import { JobsModule } from './jobs/jobs.module';
 import { FirecrawlModule } from './firecrawl/firecrawl.module';
 import { AnalysisModule } from './analysis/analysis.module';
 import { IngestModule } from './ingest/ingest.module';
+import { UsageModule } from './usage/usage.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -26,6 +27,7 @@ import { HealthController } from './health/health.controller';
     FirecrawlModule,
     AnalysisModule,
     IngestModule,
+    UsageModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: AuthGuard }],

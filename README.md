@@ -81,7 +81,7 @@ etc.) is ever scraped directly for listings.
 5. **Dedup** — on `(user_id, url_hash)` (canonicalised URL, tracking params stripped) and
    `(user_id, company_id, title_normalized)`, so the same role re-listed under a new URL
    doesn't create a duplicate card.
-6. **Scoring** — new postings are sent to Groq (`llama-3.3-70b-versatile`, JSON mode)
+6. **Scoring** — new postings are sent to Groq (`openai/gpt-oss-120b`, JSON mode)
    alongside your CV/skills profile, returning a `match_score` and a list of
    `missing_skills`.
 7. **Surfacing** — everything lands on an Angular dashboard: a sortable table or a
@@ -120,7 +120,7 @@ etc.) is ever scraped directly for listings.
 | Backend | NestJS 10 + TypeScript |
 | Database | Supabase (Postgres + Auth + Row Level Security) |
 | Scraping | [Firecrawl](https://firecrawl.dev) (`/v2/search`, `/map`, `/scrape`) |
-| Skill-gap engine | [Groq](https://groq.com) (`llama-3.3-70b-versatile`, JSON mode) |
+| Skill-gap engine | [Groq](https://groq.com) (`openai/gpt-oss-120b`, JSON mode) |
 | Scheduler | `@nestjs/schedule` cron, deployed on Render |
 | Monorepo | npm workspaces |
 
@@ -226,7 +226,7 @@ Full annotated templates live in [`.env.example`](.env.example) (root) and
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | **Server only** — bypasses RLS, never ship to Angular |
 | `SUPABASE_JWT_SECRET` | ✅ | Verifies Supabase Auth access tokens |
 | `GROQ_API_KEY` | optional | Enables skill-gap scoring |
-| `GROQ_MODEL` | optional | Defaults to `llama-3.3-70b-versatile` |
+| `GROQ_MODEL` | optional | Defaults to `openai/gpt-oss-120b` |
 | `FIRECRAWL_API_KEY` | optional | Enables auto-discovery + scraping |
 | `FIRECRAWL_API_VERSION` | optional | `v2` (default) or `v1` |
 | `INGEST_CRON` | optional | Cron expression for scheduled ingestion (default `0 6,18 * * *`) |

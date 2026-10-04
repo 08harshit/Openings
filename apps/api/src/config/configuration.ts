@@ -88,10 +88,11 @@ export default (): AppConfig => ({
   groq: {
     apiKey: str('GROQ_API_KEY'),
     baseUrl: str('GROQ_BASE_URL', 'https://api.groq.com').replace(/\/+$/, ''),
-    // llama-3.3-70b-versatile is the current sweet spot for JSON-mode
+    // openai/gpt-oss-120b is Groq's recommended replacement for the retired
+    // llama-3.3-70b-versatile (decommissioned 2026-08-16) — good JSON-mode
     // extraction quality vs. speed on Groq's free tier. Swap freely — nothing
     // in the analysis code is model-specific beyond this string.
-    model: str('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+    model: str('GROQ_MODEL', 'openai/gpt-oss-120b'),
     maxTokens: int('GROQ_MAX_TOKENS', 2048),
   },
 

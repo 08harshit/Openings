@@ -1,6 +1,6 @@
-import { Controller, ForbiddenException, Headers, Post } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Headers, Post } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { IngestRunSummary } from '@jobportal/shared';
+import type { IngestRunStatus } from '@jobportal/shared';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
 import { IngestService } from './ingest.service';
@@ -15,12 +15,20 @@ export class IngestController {
   ) {}
 
   /**
-   * The "Refresh" button — same pipeline the cron uses, triggered on demand
-   * for the calling user only.
+   * The "Refresh" button — starts the same pipeline the cron uses for the
+   * calling user only, and returns immediately. The dashboard polls
+   * `GET /ingest/status` (and re-fetches jobs) to see progress instead of
+   * holding one request open for the whole multi-minute run.
    */
   @Post('refresh')
-  async refresh(@CurrentUser('id') userId: string): Promise<IngestRunSummary> {
-    return this.ingest.run(userId);
+  refresh(@CurrentUser('id') userId: string): IngestRunStatus {
+    return this.ingest.start(userId);
+  }
+
+  /** Polled by the dashboard while a run is in flight. */
+  @Get('status')
+  status(@CurrentUser('id') userId: string): IngestRunStatus {
+    return this.ingest.getStatus(userId);
   }
 
   /**

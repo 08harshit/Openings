@@ -19,17 +19,36 @@
     </div>
   </header>
 
-  @if (refreshSummary(); as summary) {
-    <div class="card refresh-summary">
-      <strong>Last refresh:</strong>
-      {{ summary.candidates_found }} candidates found ·
-      {{ summary.jobs_inserted }} new ·
-      {{ summary.duplicates_skipped }} duplicates ·
-      {{ summary.jobs_analyzed }} scored
-      @if (summary.errors.length > 0) {
-        <span class="refresh-errors"> · {{ summary.errors.length }} warning(s)</span>
-      }
-    </div>
+  @if (refreshStatus(); as status) {
+    @if (status.state === 'running') {
+      <div class="card refresh-summary">
+        <strong>Refreshing…</strong>
+        {{ status.jobs_inserted_so_far }} new job(s) found so far — list updates live.
+      </div>
+    } @else if (status.state === 'done' && status.summary) {
+      <div class="card refresh-summary">
+        <strong>Last refresh:</strong>
+        {{ status.summary.candidates_found }} candidates found ·
+        {{ status.summary.jobs_inserted }} new ·
+        {{ status.summary.duplicates_skipped }} duplicates ·
+        {{ status.summary.jobs_analyzed }} scored
+        @if (status.summary.errors.length > 0) {
+          <span class="refresh-errors"> · {{ status.summary.errors.length }} warning(s)</span>
+        }
+      </div>
+    } @else if (status.state === 'error') {
+      <div class="card refresh-summary refresh-errors">
+        <strong>Refresh failed:</strong> {{ status.error }}
+      </div>
+    }
+
+    @if (status.state === 'running' && status.activity.length > 0) {
+      <div class="card activity-log" #activityLog>
+        @for (line of status.activity; track $index) {
+          <div class="activity-line">{{ line }}</div>
+        }
+      </div>
+    }
   }
 
   <div class="toolbar card">

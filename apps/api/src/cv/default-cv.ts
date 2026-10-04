@@ -8,37 +8,61 @@ import type { ProficiencyLevel } from '@jobportal/shared';
  * only ever applied once, when a user has no cv_profile row yet.
  */
 export const DEFAULT_CV = {
-  currentTitle: 'Full Stack Developer (Backend Focus)',
-  experienceYears: 1.5,
+  currentTitle: 'Backend-Focused Full Stack Developer',
+  experienceYears: 2.2,
 
-  rawText: `Harshit Sen — Full Stack Developer (Backend Focus)
+  rawText: `Harshit Sen — Backend-Focused Full Stack Developer
 
 EXPERIENCE
-Wisflux Tech Labs — Full Stack Developer (Backend Focus), July 2024 – Present
+Freelance (Real-Estate Marketplace Client) — Backend Engineer, July 2026 – Present
+  - Designed geo-ranked property discovery in NestJS and PostgreSQL (Sequelize)
+    using Haversine ranking with a bounding-box prefilter and composite/geo
+    indexes, replacing full-table scans on the hottest query.
+  - Integrated Razorpay payments with HMAC webhook verification on the raw
+    request body; found and fixed an idempotency bug where a redelivered
+    webhook reset an approved vendor to pending.
+  - Fixed concurrency issues across the API: a partial unique index with a 409
+    response stopped double-booked visit slots, and conditional updates made
+    the offer-expiry cron safe to run across multiple replicas.
+  - Built a media upload pipeline (presigned uploads, WebP variant generation,
+    scheduled orphan sweeper) on AWS S3 and CloudFront.
+  - Built CI/CD with GitHub Actions and Docker that deploys to AWS EC2 without
+    SSH access; the rollout runs migrations, checks health, and auto-rolls
+    back on failure.
+
+Wisflux Tech Labs, Jaipur — Full Stack Developer (Backend Focus), August 2024 – June 2026
   (Software Development Intern, April 2024 – July 2024)
-  - Built and maintained backend services in NestJS / Node.js / Express.
-  - Designed real-time features using Socket.IO, WebSockets and Server-Sent Events.
-  - Built event-driven pipelines on Kafka with dead-letter queues and circuit
-    breakers for fault tolerance.
-  - Used Redis for Pub/Sub messaging and distributed locking across instances.
-  - Modelled and optimised PostgreSQL schemas via TypeORM and Sequelize;
-    profiled and tuned slow queries to improve API response times.
-  - Ran analytics workloads against BigQuery.
-  - Containerised services with Docker; integrated Supabase Auth.
-  - Built frontend interfaces in Angular.
+  - Designed and implemented a real-time collaboration system using NestJS and
+    Socket.IO with Redis Pub/Sub, enabling concurrent editing, user presence
+    tracking, and room-based broadcasting across distributed clients.
+  - Implemented distributed locking using Redis with heartbeat-based lock
+    extension, preventing concurrent execution of critical workflows.
+  - Designed an event-driven data pipeline and asynchronous audit logging
+    system using PostgreSQL triggers and Kafka.
+  - Implemented fault-tolerant pipelines using retry mechanisms, circuit
+    breakers, and Dead Letter Queues (DLQ).
+  - Optimized REST API performance (indexed queries, summary endpoints, lazy
+    loading), reducing payload size from 1.4MB to 10KB and improving response
+    times by 50-90%.
+  - Built a high-performance Project Metrics API using NestJS and Sequelize,
+    replacing client-side aggregations with optimized SQL (SUM, CASE,
+    ARRAY_AGG), reducing payload size by 95%.
 
 EDUCATION
 B.Tech, Information Technology — Swami Keshvanand Institute of Technology
 2020 – 2024, CGPA 8.4
 
 CORE STACK
-NestJS, Node.js, Express.js, Angular, PostgreSQL, TypeORM, Sequelize, Redis,
-Kafka, Socket.IO, WebSockets, SSE, BigQuery, Docker, Supabase Auth,
-TypeScript, JavaScript, SQL
+TypeScript, JavaScript, SQL, Node.js, NestJS, Express.js, REST APIs,
+Microservices, Angular, HTML, CSS, RxJS, PostgreSQL, Sequelize, Apache Kafka,
+Redis, Redis Pub/Sub, WebSockets, Socket.IO, Server-Sent Events, AWS, Docker,
+Nginx, Git, GitHub, GitHub Actions, CI/CD
 
 STRENGTHS
-Real-time systems, event-driven architecture, API performance optimisation,
-distributed locking, fault-tolerant pipelines (DLQ, circuit breakers).`,
+Geo-ranked search and query optimization, payment integration and webhook
+security, concurrency control under load, real-time collaboration systems,
+distributed locking, event-driven architecture, fault-tolerant pipelines
+(DLQ, circuit breakers), zero-downtime deployment pipelines.`,
 
   /**
    * Canonical skill slugs (see packages/shared/src/skills.ts) with self-rated
@@ -59,12 +83,10 @@ distributed locking, fault-tolerant pipelines (DLQ, circuit breakers).`,
 
     // Data
     ['postgresql', 'advanced'],
-    ['typeorm', 'advanced'],
-    ['sequelize', 'intermediate'],
+    ['sequelize', 'advanced'],
     ['redis', 'advanced'],
-    ['bigquery', 'intermediate'],
-    ['query-optimization', 'intermediate'],
-    ['database-design', 'intermediate'],
+    ['query-optimization', 'advanced'],
+    ['database-design', 'advanced'],
 
     // Messaging / realtime — the differentiators
     ['kafka', 'intermediate'],
@@ -79,13 +101,21 @@ distributed locking, fault-tolerant pipelines (DLQ, circuit breakers).`,
     ['html', 'intermediate'],
     ['css', 'intermediate'],
 
-    // Infra / tooling
+    // Cloud / infra
+    ['aws', 'intermediate'],
+    ['s3', 'intermediate'],
     ['docker', 'intermediate'],
+    ['nginx', 'intermediate'],
+    ['ci-cd', 'intermediate'],
+    ['github-actions', 'intermediate'],
     ['git', 'advanced'],
     ['linux', 'intermediate'],
-    ['oauth', 'intermediate'],
-    ['supabase', 'intermediate'],
-    ['agile', 'intermediate'],
+
+    // Product / domain-specific
+    ['razorpay', 'intermediate'],
+    ['webhooks', 'intermediate'],
+    ['distributed-locking', 'advanced'],
     ['system-design', 'intermediate'],
+    ['agile', 'intermediate'],
   ] as ReadonlyArray<readonly [string, ProficiencyLevel]>,
 } as const;

@@ -3,6 +3,12 @@
 // Full reference: https://docs.firecrawl.dev/api-reference
 // ---------------------------------------------------------------------------
 
+export interface FirecrawlCreditUsage {
+  remaining_credits: number;
+  plan_credits: number | null;
+  observed_at: string;
+}
+
 export interface FirecrawlSearchRequest {
   query: string;
   limit?: number;

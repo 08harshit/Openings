@@ -43,6 +43,18 @@ matching exactly this shape:
  * output to a single JSON object; the shape is still validated on our side
  * before it ever reaches the database.
  */
+export interface GroqRateLimitSnapshot {
+  limit_requests: number | null;
+  remaining_requests: number | null;
+  reset_requests: string | null;
+  limit_tokens: number | null;
+  remaining_tokens: number | null;
+  reset_tokens: string | null;
+  /** When this snapshot was captured — Groq has no standalone "check my
+   * quota" endpoint, so this is only ever as fresh as the last real call. */
+  observed_at: string;
+}
+
 @Injectable()
 export class AnalysisService {
   private readonly logger = new Logger(AnalysisService.name);
@@ -50,6 +62,10 @@ export class AnalysisService {
   private readonly baseUrl: string;
   private readonly model: string;
   private readonly maxTokens: number;
+
+  /** Rate-limit headers from the most recent Groq call — the only place
+   * this data is ever exposed, there's no dedicated usage endpoint. */
+  private lastRateLimit: GroqRateLimitSnapshot | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -63,6 +79,12 @@ export class AnalysisService {
 
   get isConfigured(): boolean {
     return this.apiKey.length > 0;
+  }
+
+  /** Snapshot from the last Groq call, or null if none has been made yet
+   * this process lifetime (e.g. fresh deploy, no analysis run since boot). */
+  getRateLimitSnapshot(): GroqRateLimitSnapshot | null {
+    return this.lastRateLimit;
   }
 
   async analyze(
@@ -127,6 +149,8 @@ export class AnalysisService {
       body: JSON.stringify(body),
     });
 
+    this.captureRateLimit(res.headers);
+
     if (res.status === 429 || res.status >= 500) {
       throw new GroqRetryableError(
         `Groq chat completions returned ${res.status}`,
@@ -151,6 +175,25 @@ export class AnalysisService {
       this.logger.warn(`Could not parse Groq response as JSON: ${error}`);
       return null;
     }
+  }
+
+  private captureRateLimit(headers: Headers): void {
+    const asNumber = (name: string): number | null => {
+      const value = headers.get(name);
+      if (!value) return null;
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    this.lastRateLimit = {
+      limit_requests: asNumber('x-ratelimit-limit-requests'),
+      remaining_requests: asNumber('x-ratelimit-remaining-requests'),
+      reset_requests: headers.get('x-ratelimit-reset-requests'),
+      limit_tokens: asNumber('x-ratelimit-limit-tokens'),
+      remaining_tokens: asNumber('x-ratelimit-remaining-tokens'),
+      reset_tokens: headers.get('x-ratelimit-reset-tokens'),
+      observed_at: new Date().toISOString(),
+    };
   }
 }
 

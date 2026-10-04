@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Company, IngestRunSummary } from '@jobportal/shared';
+import type { Company, IngestRunStatus, IngestRunSummary } from '@jobportal/shared';
 import { randomUUID } from 'node:crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import { FirecrawlService } from '../firecrawl/firecrawl.service';
@@ -44,6 +44,13 @@ export class IngestService {
    * for the same Firecrawl rate limit and duplicate discovery work. */
   private readonly runningUsers = new Set<string>();
 
+  /** Latest run status per user, polled by the dashboard via `getStatus()`
+   * so new jobs can surface as the run progresses instead of only once the
+   * whole multi-minute pipeline finishes. In-memory only — fine for a
+   * personal-tool single-instance deploy; a restart just means the next
+   * poll sees 'idle' until a new run starts. */
+  private readonly statusByUser = new Map<string, IngestRunStatus>();
+
   constructor(
     private readonly supabase: SupabaseService,
     private readonly firecrawl: FirecrawlService,
@@ -55,30 +62,112 @@ export class IngestService {
   ) {}
 
   /**
-   * The single entry point for both the cron trigger and the manual "Refresh"
-   * button. Two phases: discover new companies by name (search is only ever
-   * used to learn a name — never to source a job posting directly), then
-   * scrape every company with a known-good careers page (pinned +
-   * auto-discovered alike).
+   * Fire-and-forget entry point for the "Refresh" button: starts `run()` in
+   * the background and returns immediately instead of making the caller
+   * await the full multi-minute pipeline. Progress is readable via
+   * `getStatus()`, which the dashboard polls — jobs land in `job_postings`
+   * company-by-company as the run proceeds, so `GET /api/jobs` already shows
+   * them well before the run as a whole finishes.
    */
-  async run(userId: string): Promise<IngestRunSummary> {
+  /** How many recent activity lines to keep per user — a feed, not a log. */
+  private static readonly ACTIVITY_LIMIT = 30;
+
+  start(userId: string): IngestRunStatus {
+    if (this.runningUsers.has(userId)) {
+      throw new ConflictException('An ingestion run is already in progress for this user');
+    }
+
+    const runId = randomUUID();
+    const startedAt = new Date().toISOString();
+    this.statusByUser.set(userId, {
+      state: 'running',
+      run_id: runId,
+      started_at: startedAt,
+      jobs_inserted_so_far: 0,
+      summary: null,
+      error: null,
+      activity: ['Starting ingestion run…'],
+    });
+
+    void this.run(userId, runId).catch((error) => {
+      const current = this.statusByUser.get(userId);
+      this.statusByUser.set(userId, {
+        state: 'error',
+        run_id: runId,
+        started_at: startedAt,
+        jobs_inserted_so_far: current?.jobs_inserted_so_far ?? 0,
+        summary: null,
+        error: describeError(error),
+        activity: [...(current?.activity ?? []), `Run failed: ${describeError(error)}`].slice(
+          -IngestService.ACTIVITY_LIMIT,
+        ),
+      });
+    });
+
+    return this.statusByUser.get(userId)!;
+  }
+
+  getStatus(userId: string): IngestRunStatus {
+    return (
+      this.statusByUser.get(userId) ?? {
+        state: 'idle',
+        run_id: null,
+        started_at: null,
+        jobs_inserted_so_far: 0,
+        summary: null,
+        error: null,
+        activity: [],
+      }
+    );
+  }
+
+  /** Appends one line to the user's live activity feed, trimmed to the cap. */
+  private logActivity(userId: string, line: string): void {
+    const current = this.statusByUser.get(userId);
+    if (!current) return;
+    const activity = [...current.activity, line].slice(-IngestService.ACTIVITY_LIMIT);
+    this.statusByUser.set(userId, { ...current, activity });
+  }
+
+  /**
+   * The actual pipeline, shared by `start()` and the cron scheduler. Two
+   * phases: discover new companies by name (search is only ever used to
+   * learn a name — never to source a job posting directly), then scrape
+   * every company with a known-good careers page (pinned + auto-discovered
+   * alike).
+   */
+  async run(userId: string, runId = randomUUID()): Promise<IngestRunSummary> {
     if (this.runningUsers.has(userId)) {
       throw new ConflictException('An ingestion run is already in progress for this user');
     }
     this.runningUsers.add(userId);
 
     try {
-      const runId = randomUUID();
       const startedAt = new Date();
       const errors: string[] = [];
 
       this.logger.log(`[${runId}] Ingestion run starting for user ${userId}`);
+      this.logActivity(userId, 'Discovering new companies…');
 
       const discovery = await this.discoverCompanies(userId, errors);
+      this.logActivity(
+        userId,
+        `Discovery done — ${discovery.resolved} resolved, ${discovery.failed} failed`,
+      );
+
       const { candidates, companiesScraped } = await this.scrapeResolvedCompanies(userId, errors);
 
       const maxNew = this.config.get<number>('ingest.maxNewJobsPerRun', 100);
       const { inserted, duplicates } = await this.dedupAndInsert(userId, candidates, maxNew);
+      this.logActivity(
+        userId,
+        `Inserted ${inserted.length} new job(s), skipped ${duplicates} duplicate(s)`,
+      );
+
+      // Inserted rows are already visible to GET /api/jobs at this point —
+      // publish the count now so a polling dashboard can show them before
+      // analysis (the slowest remaining phase) finishes.
+      this.updateStatus(userId, { jobs_inserted_so_far: inserted.length });
 
       const maxAnalyses = this.config.get<number>('ingest.maxAnalysesPerRun', 40);
       const concurrency = this.config.get<number>('ingest.analysisConcurrency', 1);
@@ -86,10 +175,14 @@ export class IngestService {
 
       let analyzed = 0;
       if (this.analysis.isConfigured && toAnalyze.length > 0) {
+        this.logActivity(userId, `Scoring ${toAnalyze.length} job(s) against your CV…`);
         await mapWithConcurrency(toAnalyze, concurrency, async (job) => {
           try {
             const ok = await this.analyzeAndPersist(userId, job);
-            if (ok) analyzed++;
+            if (ok) {
+              analyzed++;
+              this.logActivity(userId, `Scored "${job.title}"${job.companyName ? ` at ${job.companyName}` : ''}`);
+            }
           } catch (error) {
             errors.push(`Analysis failed for "${job.title}": ${describeError(error)}`);
           }
@@ -122,10 +215,22 @@ export class IngestService {
           `${inserted.length} new, ${duplicates} duplicates, ${analyzed} analyzed, ${errors.length} error(s)`,
       );
 
+      this.logActivity(
+        userId,
+        `Done — ${inserted.length} new, ${duplicates} duplicates, ${analyzed} scored` +
+          `${errors.length > 0 ? `, ${errors.length} warning(s)` : ''}`,
+      );
+      this.updateStatus(userId, { state: 'done', summary, jobs_inserted_so_far: inserted.length });
       return summary;
     } finally {
       this.runningUsers.delete(userId);
     }
+  }
+
+  private updateStatus(userId: string, patch: Partial<IngestRunStatus>): void {
+    const current = this.statusByUser.get(userId);
+    if (!current) return;
+    this.statusByUser.set(userId, { ...current, ...patch });
   }
 
   // ---------------------------------------------------------------------
@@ -176,8 +281,13 @@ export class IngestService {
       try {
         const result = await this.resolver.resolve(name);
         await this.companies.recordDiscoveredCompany(userId, name, result);
-        if (result.status === 'resolved') resolved++;
-        else failed++;
+        if (result.status === 'resolved') {
+          resolved++;
+          this.logActivity(userId, `Resolved "${name}" -> ${result.careersUrl ?? 'careers page found'}`);
+        } else {
+          failed++;
+          this.logActivity(userId, `Could not resolve a careers page for "${name}"`);
+        }
       } catch (error) {
         failed++;
         errors.push(`Resolution failed for "${name}": ${describeError(error)}`);
@@ -200,6 +310,7 @@ export class IngestService {
     let companiesScraped = 0;
 
     for (const company of toScrape) {
+      this.logActivity(userId, `Scraping ${company.name}…`);
       try {
         const raw =
           company.ats_type && company.ats_board_token
@@ -212,10 +323,12 @@ export class IngestService {
 
         await this.companies.markScraped(company.id);
         companiesScraped++;
+        this.logActivity(userId, `${company.name}: ${raw.length} candidate job(s) found`);
       } catch (error) {
         const msg = `Scrape failed for "${company.name}": ${describeError(error)}`;
         this.logger.warn(msg);
         errors.push(msg);
+        this.logActivity(userId, `${company.name}: scrape failed`);
       }
     }
 

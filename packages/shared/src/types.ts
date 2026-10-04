@@ -221,6 +221,52 @@ export interface IngestRunSummary {
   errors: string[];
 }
 
+export type IngestRunState = 'idle' | 'running' | 'done' | 'error';
+
+/** Polled by the dashboard while a run is in flight so new jobs can be
+ * surfaced as they land, instead of waiting for the whole run to finish. */
+export interface IngestRunStatus {
+  state: IngestRunState;
+  run_id: string | null;
+  started_at: string | null;
+  /** Running tally, updated as the run progresses — not just on completion. */
+  jobs_inserted_so_far: number;
+  summary: IngestRunSummary | null;
+  error: string | null;
+  /** Most recent step descriptions, oldest first — a live activity feed so
+   * a long run reads as "working" rather than "stuck". Capped server-side;
+   * not a full log, just enough to show forward progress. */
+  activity: string[];
+}
+
+// ---------------------------------------------------------------------------
+// API usage / quota
+// ---------------------------------------------------------------------------
+
+export interface FirecrawlUsageSnapshot {
+  remaining_credits: number;
+  plan_credits: number | null;
+  observed_at: string;
+}
+
+export interface GroqUsageSnapshot {
+  limit_requests: number | null;
+  remaining_requests: number | null;
+  reset_requests: string | null;
+  limit_tokens: number | null;
+  remaining_tokens: number | null;
+  reset_tokens: string | null;
+  observed_at: string;
+}
+
+export interface ApiUsageSnapshot {
+  /** Null when FIRECRAWL_API_KEY isn't set, or the usage call itself failed. */
+  firecrawl: FirecrawlUsageSnapshot | null;
+  /** Null when GROQ_API_KEY isn't set, or no Groq call has been made yet
+   * this process lifetime — Groq has no standalone "check my quota" call. */
+  groq: GroqUsageSnapshot | null;
+}
+
 export interface DashboardStats {
   total: number;
   by_status: Record<JobStatus, number>;

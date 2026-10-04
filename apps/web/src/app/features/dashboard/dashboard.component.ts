@@ -1,11 +1,12 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { AfterViewChecked, Component, ElementRef, OnDestroy, ViewChild, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
+import { interval, Subscription, switchMap } from 'rxjs';
 import {
   KANBAN_STATUSES,
   JOB_STATUS_LABELS,
   SENIORITY_LEVELS,
-  type IngestRunSummary,
+  type IngestRunStatus,
   type JobListItem,
   type JobStatus,
   type SeniorityLevel,
@@ -25,9 +26,13 @@ type ViewMode = 'table' | 'kanban';
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.css',
 })
-export class DashboardComponent {
+export class DashboardComponent implements OnDestroy, AfterViewChecked {
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
+  private pollSub: Subscription | null = null;
+
+  @ViewChild('activityLog') private activityLogEl?: ElementRef<HTMLDivElement>;
+  private activityLogLength = 0;
 
   readonly kanbanStatuses = KANBAN_STATUSES;
   readonly statusLabels = JOB_STATUS_LABELS;
@@ -38,7 +43,7 @@ export class DashboardComponent {
   total = signal(0);
   loading = signal(false);
   refreshing = signal(false);
-  refreshSummary = signal<IngestRunSummary | null>(null);
+  refreshStatus = signal<IngestRunStatus | null>(null);
   stats = signal<JobStatsResponse | null>(null);
   showAddJob = signal(false);
   dragOverStatus = signal<JobStatus | null>(null);
@@ -62,6 +67,15 @@ export class DashboardComponent {
 
   constructor() {
     this.loadAll();
+    // Pick up an already-running refresh (e.g. started before a page reload)
+    // instead of leaving the dashboard with no indication one is in flight.
+    this.api.ingestStatus().subscribe((status) => {
+      if (status.state === 'running') {
+        this.refreshing.set(true);
+        this.refreshStatus.set(status);
+        this.startPolling();
+      }
+    });
   }
 
   loadAll(): void {
@@ -120,18 +134,63 @@ export class DashboardComponent {
     this.loadJobs();
   }
 
+  /**
+   * Starts a background ingestion run and polls for progress instead of
+   * awaiting one multi-minute request — new jobs land in the DB company by
+   * company, so each poll tick's `loadAll()` surfaces them as they're found
+   * rather than only once the whole run finishes.
+   */
   refresh(): void {
     if (this.refreshing()) return;
     this.refreshing.set(true);
-    this.refreshSummary.set(null);
+    this.refreshStatus.set(null);
+
     this.api.refresh().subscribe({
-      next: (summary) => {
-        this.refreshing.set(false);
-        this.refreshSummary.set(summary);
-        this.loadAll();
+      next: (status) => {
+        this.refreshStatus.set(status);
+        this.startPolling();
       },
       error: () => this.refreshing.set(false),
     });
+  }
+
+  private startPolling(): void {
+    this.pollSub?.unsubscribe();
+    this.pollSub = interval(3000)
+      .pipe(switchMap(() => this.api.ingestStatus()))
+      .subscribe({
+        next: (status) => {
+          this.refreshStatus.set(status);
+          this.loadAll();
+          if (status.state === 'done' || status.state === 'error') {
+            this.stopPolling();
+          }
+        },
+        error: () => this.stopPolling(),
+      });
+  }
+
+  private stopPolling(): void {
+    this.pollSub?.unsubscribe();
+    this.pollSub = null;
+    this.refreshing.set(false);
+  }
+
+  ngOnDestroy(): void {
+    this.pollSub?.unsubscribe();
+  }
+
+  /** Keeps the activity log pinned to its latest line as new ones arrive,
+   * the way a streaming chat log scrolls — without fighting the user if
+   * they've scrolled up to read something earlier. */
+  ngAfterViewChecked(): void {
+    const el = this.activityLogEl?.nativeElement;
+    const activity = this.refreshStatus()?.activity ?? [];
+    if (!el || activity.length === this.activityLogLength) return;
+
+    const wasNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    this.activityLogLength = activity.length;
+    if (wasNearBottom) el.scrollTop = el.scrollHeight;
   }
 
   updateStatus(job: JobListItem, status: JobStatus): void {
