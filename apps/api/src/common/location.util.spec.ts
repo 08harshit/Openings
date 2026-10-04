@@ -37,4 +37,18 @@ describe('isIndiaOrRemote', () => {
     expect(isIndiaOrRemote('Bangalore, India', [])).toBe(false);
     expect(isIndiaOrRemote('Remote', [])).toBe(false);
   });
+
+  it('does not treat a blank/whitespace-only marker as a wildcard match', () => {
+    expect(isIndiaOrRemote('San Francisco, CA', [''])).toBe(false);
+    expect(isIndiaOrRemote('San Francisco, CA', ['   '])).toBe(false);
+  });
+
+  it('accepts a preferred place even when a disqualified remote qualifier is also present', () => {
+    // A real ATS location string can list multiple options at once. The old
+    // (pre-refactor) behavior checked for an India/preferred place match
+    // before the remote-qualifier short-circuit, so a string naming both a
+    // preferred place AND a disqualified remote qualifier was still accepted
+    // on the strength of the place match. That precedence must be preserved.
+    expect(isIndiaOrRemote('Bengaluru, India; Remote - US only', PREFERRED_LOCATIONS)).toBe(true);
+  });
 });

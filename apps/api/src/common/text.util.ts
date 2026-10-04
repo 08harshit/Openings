@@ -216,9 +216,16 @@ function escapeRegex(s: string): string {
  * Development Representative (Swedish Speaking)") once slipped past this
  * filter. Every marker in the lists below starts and ends on a word
  * character, so `\b` boundaries are safe on both sides.
+ *
+ * A blank/whitespace-only marker is treated as never matching, not as a
+ * wildcard — `new RegExp('\\b\\b')` matches any word character, which would
+ * otherwise turn one stray empty string in a profile's target_roles into
+ * "accept every job," or one in excluded_roles into "reject every job."
  */
 function containsWord(haystack: string, marker: string): boolean {
-  return new RegExp(`\\b${escapeRegex(marker.trim())}\\b`, 'i').test(haystack);
+  const trimmed = marker.trim();
+  if (!trimmed) return false;
+  return new RegExp(`\\b${escapeRegex(trimmed)}\\b`, 'i').test(haystack);
 }
 
 /**

@@ -73,4 +73,13 @@ describe('looksLikeRelevantRole', () => {
     expect(looksLikeRelevantRole('Backend Engineer', null, [], EXCLUDED_ROLES, EXCLUDED_DEPARTMENTS)).toBe(false);
     expect(looksLikeRelevantRole('Software Developer', null, [], [], [])).toBe(false);
   });
+
+  it('does not treat a blank/whitespace-only marker as a wildcard match', () => {
+    // A blank entry in targetRoles must not accept every title — containsWord('', '')
+    // trimmed would otherwise build /\b\b/i, which matches any word character.
+    expect(looksLikeRelevantRole('Graphic Designer', null, [''], [], [])).toBe(false);
+    expect(looksLikeRelevantRole('Graphic Designer', null, ['   '], [], [])).toBe(false);
+    // A blank entry in excludedRoles must not reject every title either.
+    expect(looksLikeRelevantRole('Backend Engineer', null, TARGET_ROLES, [''], [])).toBe(true);
+  });
 });

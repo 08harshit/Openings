@@ -77,6 +77,11 @@ export class IngestService {
       this.logger.log(`[${runId}] Ingestion run starting for user ${userId}`);
 
       const { profile } = await this.cv.getSnapshot(userId);
+      const emptyProfileWarning = describeEmptyProfileWarning(profile);
+      if (emptyProfileWarning) {
+        this.logger.warn(`[${runId}] ${emptyProfileWarning}`);
+        errors.push(emptyProfileWarning);
+      }
 
       const discovery = await this.discoverCompanies(userId, errors, profile);
       const { candidates, companiesScraped } = await this.scrapeResolvedCompanies(userId, errors, profile);
@@ -203,7 +208,8 @@ export class IngestService {
     errors: string[],
     profile: CvProfile,
   ): Promise<{ candidates: CompanyScopedCandidate[]; companiesScraped: number }> {
-    const toScrape = await this.companies.listScrapable(userId);
+    const scrapable = await this.companies.listScrapable(userId);
+    const toScrape = filterOutExcludedCompanies(scrapable, profile.excluded_companies);
     const candidates: CompanyScopedCandidate[] = [];
     let companiesScraped = 0;
 
@@ -492,4 +498,42 @@ function describeError(error: unknown): string {
 export function isExcludedCompany(name: string, excludedCompanies: readonly string[]): boolean {
   const normalized = name.trim().toLowerCase();
   return excludedCompanies.some((excluded) => excluded.trim().toLowerCase() === normalized);
+}
+
+/**
+ * Drops any company (newly discovered OR already resolved/known) matching the
+ * candidate's excluded-companies list. Applied both before resolution
+ * (discoverCompanies) and before scraping (scrapeResolvedCompanies) — an
+ * exclusion added after a company was already resolved on an earlier run
+ * must still stop future scrapes, not just block it from being discovered
+ * again (a company is usually excluded *because* its jobs keep showing up,
+ * which means it's already resolved by the time the user excludes it).
+ */
+export function filterOutExcludedCompanies<T extends { name: string }>(
+  companies: readonly T[],
+  excludedCompanies: readonly string[],
+): T[] {
+  return companies.filter((company) => !isExcludedCompany(company.name, excludedCompanies));
+}
+
+/**
+ * An empty `target_roles` or `preferred_locations` list is a real reachable
+ * state (e.g. a profile migrated before this feature existed, never backfilled
+ * by design — see 0005_candidate_preferences.sql) and silently rejects every
+ * single job, with no error anywhere. Surfacing it as a run error means a
+ * zero-job run is explained instead of looking like a quiet, successful no-op.
+ */
+export function describeEmptyProfileWarning(profile: {
+  target_roles: readonly string[];
+  preferred_locations: readonly string[];
+}): string | null {
+  const emptyFields: string[] = [];
+  if (profile.target_roles.length === 0) emptyFields.push('target_roles');
+  if (profile.preferred_locations.length === 0) emptyFields.push('preferred_locations');
+  if (emptyFields.length === 0) return null;
+
+  return (
+    `Profile has empty ${emptyFields.join(' and ')} — every job will be rejected until you ` +
+    `PATCH /cv with values (see db/migrations/0005_candidate_preferences.sql for the fields to set).`
+  );
 }

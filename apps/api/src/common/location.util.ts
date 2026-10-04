@@ -37,7 +37,29 @@ const REMOTE_MARKERS = [
   'fully distributed',
 ];
 
-/** The hard gate the ingest pipeline applies: keep only a candidate's preferred locations. */
+/** A blank/whitespace-only marker never matches — `"".includes("")` is always
+ * `true` in JS, which would otherwise turn one stray empty string in a
+ * profile's preferred_locations into "accept every location." */
+function includesMarker(haystack: string, marker: string): boolean {
+  const trimmed = marker.toLowerCase();
+  if (!trimmed.trim()) return false;
+  return haystack.includes(trimmed);
+}
+
+/**
+ * The hard gate the ingest pipeline applies: keep only a candidate's
+ * preferred locations.
+ *
+ * A specific preferred place (e.g. "India", "Bangalore") is checked first and
+ * wins outright — a listing naming both a preferred place AND a disqualified
+ * remote qualifier (e.g. "Bengaluru, India; Remote - US only") is accepted on
+ * the strength of the place match, since the candidate's real preference
+ * ("somewhere in India") is satisfied regardless of what else the string
+ * says about remote eligibility elsewhere. Only once no preferred place is
+ * found does a disqualified remote mention (e.g. "Remote (US only)") get to
+ * reject the listing — otherwise a bare "remote" claim would be a false
+ * positive for a candidate who didn't ask for that specific remote carve-out.
+ */
 export function isIndiaOrRemote(
   rawLocation: string | null | undefined,
   preferredLocations: readonly string[],
@@ -45,10 +67,19 @@ export function isIndiaOrRemote(
   if (!rawLocation || !rawLocation.trim()) return false;
   const t = rawLocation.toLowerCase();
 
+  // Specific preferred places (not the generic remote markers, which get
+  // their own disqualifying-qualifier check below) win outright — a listing
+  // naming both a preferred place and an unrelated remote qualifier is still
+  // a real match on the place alone.
+  const placeMarkers = preferredLocations.filter(
+    (marker) => !REMOTE_MARKERS.includes(marker.trim().toLowerCase()),
+  );
+  if (placeMarkers.some((marker) => includesMarker(t, marker))) return true;
+
   const isRemoteMention = REMOTE_MARKERS.some((marker) => t.includes(marker));
   if (isRemoteMention && NON_INDIA_REMOTE_QUALIFIERS.some((qualifier) => t.includes(qualifier))) {
     return false;
   }
 
-  return preferredLocations.some((marker) => t.includes(marker.toLowerCase()));
+  return preferredLocations.some((marker) => includesMarker(t, marker));
 }
