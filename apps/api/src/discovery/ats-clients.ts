@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import type { AtsType } from '@jobportal/shared';
+import { stripHtml } from '../common/html.util';
 
 /**
  * Public, unauthenticated job-board JSON APIs for the three ATS platforms
@@ -193,23 +194,6 @@ async function tryAshby(slug: string): Promise<AtsMatch | null> {
     logger.debug(`Ashby check failed for "${slug}": ${describeError(error)}`);
     return null;
   }
-}
-
-/** Greenhouse's `content` field is HTML — strip tags for a plain-text
- * description (what actually gets scored by Groq). */
-function stripHtml(html: string): string {
-  return html
-    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 function toDateOnly(isoLike: string | undefined): string | null {
