@@ -26,6 +26,28 @@ export interface CvProfile {
   experience_years: number | null;
   current_title: string | null;
   updated_at: string;
+  /** Role-title keywords this candidate targets (e.g. "backend", "full stack"). */
+  target_roles: string[];
+  /** Role-title keywords that disqualify a posting even if otherwise relevant. */
+  excluded_roles: string[];
+  /** Department names (from ATS-provided department fields) that disqualify a posting. */
+  excluded_departments: string[];
+  /** Location keywords (place names and/or remote markers) this candidate accepts. */
+  preferred_locations: string[];
+  /** Company names never to discover/scrape for this candidate. */
+  excluded_companies: string[];
+  /** Minimum years of experience the candidate wants a posting to require. Null = no floor. */
+  seniority_min_years: number | null;
+  /** Maximum years of experience the candidate wants a posting to require. Null = no ceiling. */
+  seniority_max_years: number | null;
+  /** Accepted work arrangements (e.g. "remote", "hybrid", "onsite"). Not yet consumed by ingest. */
+  work_modes: string[];
+  /** Accepted employment types (e.g. "full-time", "contract"). Not yet consumed by ingest. */
+  employment_types: string[];
+  /** Preferred industry/domain keywords. Not yet consumed by ingest. */
+  domain_preferences: string[];
+  /** Disqualifying industry/domain keywords. Not yet consumed by ingest. */
+  domain_exclusions: string[];
 }
 
 export interface Skill {
