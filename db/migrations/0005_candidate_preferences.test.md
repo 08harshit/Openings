@@ -19,4 +19,8 @@ check against the live Supabase project.
 
 ## Result
 
-Pending user confirmation — see ledger entry for this task.
+Verified 2026-10-04: migration applied to the live Supabase project.
+Query returned one row for the existing user: `target_roles = []`,
+`preferred_locations = []`, `seniority_min_years = null` — the expected
+safe-default state, not backfilled with DEFAULT_CV's seeded values.
+Confirmed by the user directly against the Supabase SQL Editor.
