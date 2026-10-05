@@ -1,4 +1,6 @@
-import { combineLlmFit, combineFinalScore, bandFor } from './ranking';
+import { combineLlmFit, combineFinalScore, bandFor, scorePreference } from './ranking';
+import { normalizeCandidate } from './normalize';
+import type { RawJobCandidate } from '../firecrawl/firecrawl.types';
 import type { LlmJobEvaluation } from '@jobportal/shared';
 
 function evaluation(overrides: Partial<LlmJobEvaluation> = {}): LlmJobEvaluation {
@@ -105,5 +107,49 @@ describe('combineFinalScore', () => {
   it('attaches the band matching the computed final score', () => {
     const result = combineFinalScore({ retrievalScore: 100, llmScore: 100, freshnessScore: 100, preferenceScore: 100 }, weights);
     expect(result.recommendation).toBe('APPLY_NOW');
+  });
+});
+
+function job(overrides: Partial<RawJobCandidate> = {}) {
+  return normalizeCandidate({
+    candidate: {
+      title: 'Backend Engineer',
+      url: 'https://acme.com/careers/1',
+      companyNameHint: 'Acme Fintech',
+      locationHint: 'Remote',
+      snippet: '',
+      markdown: 'Join our fintech payments team building backend services.',
+      source: 'http_scrape',
+      postedDateIso: null,
+      ...overrides,
+    },
+    companyId: 'company-1',
+    companyName: 'Acme Fintech',
+  });
+}
+
+describe('scorePreference', () => {
+  it('returns the neutral default when both preference lists are empty', () => {
+    expect(scorePreference(job(), { workModes: [], domainPreferences: [] })).toBe(50);
+  });
+
+  it('scores higher when the job is remote and the candidate prefers remote', () => {
+    const remoteJob = job({ locationHint: 'Remote' });
+    const onsiteJob = job({ locationHint: 'Bangalore Office, On-site' });
+    const remoteScore = scorePreference(remoteJob, { workModes: ['remote'], domainPreferences: [] });
+    const onsiteScore = scorePreference(onsiteJob, { workModes: ['remote'], domainPreferences: [] });
+    expect(remoteScore).toBeGreaterThan(onsiteScore);
+  });
+
+  it('scores higher when the job domain matches a preferred domain', () => {
+    const fintechJob = job({ markdown: 'Join our fintech payments team.' });
+    const matched = scorePreference(fintechJob, { workModes: [], domainPreferences: ['fintech'] });
+    const unmatched = scorePreference(fintechJob, { workModes: [], domainPreferences: ['healthcare'] });
+    expect(matched).toBeGreaterThan(unmatched);
+  });
+
+  it('never throws on an empty description and empty location', () => {
+    const bareJob = job({ markdown: '', snippet: '', locationHint: '' });
+    expect(() => scorePreference(bareJob, { workModes: ['remote'], domainPreferences: ['fintech'] })).not.toThrow();
   });
 });

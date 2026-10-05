@@ -1,4 +1,6 @@
 import type { LlmJobEvaluation, Recommendation } from '@jobportal/shared';
+import { containsWord } from '../common/text.util';
+import type { NormalizedJob } from './normalize';
 
 /** Weights for collapsing LlmJobEvaluation's six fit dimensions into one
  * llm_score. Favors requiredSkillFit and roleFit — the two dimensions that
@@ -90,4 +92,48 @@ export function combineFinalScore(input: FinalScoreInput, weights: FinalScoreWei
 
   const finalScore = Math.min(100, Math.max(0, Math.round(weighted)));
   return { finalScore, recommendation: bandFor(finalScore) };
+}
+
+const PREFERENCE_NEUTRAL = 50;
+const PREFERENCE_MATCH = 80;
+const PREFERENCE_MISMATCH = 30;
+const WORK_MODE_MARKERS: Record<string, string[]> = {
+  remote: ['remote', 'work from home', 'wfh', 'fully distributed'],
+  hybrid: ['hybrid'],
+  onsite: ['on-site', 'onsite', 'in-office', 'in office'],
+};
+
+export interface PreferenceContext {
+  workModes: readonly string[];
+  domainPreferences: readonly string[];
+}
+
+/** Soft 0-100 match of the job's detected work mode and domain against the
+ * candidate's stated preferences. Returns the neutral default when the
+ * profile has set neither — an unset preference is not evidence of a bad
+ * fit, same principle as sub-project 3's empty target_roles/preferred_locations
+ * handling. */
+export function scorePreference(job: NormalizedJob, ctx: PreferenceContext): number {
+  const hasWorkModePref = ctx.workModes.length > 0;
+  const hasDomainPref = ctx.domainPreferences.length > 0;
+  if (!hasWorkModePref && !hasDomainPref) return PREFERENCE_NEUTRAL;
+
+  const haystack = `${job.location ?? ''} ${job.description.slice(0, 1500)}`.toLowerCase();
+  const scores: number[] = [];
+
+  if (hasWorkModePref) {
+    const jobModes = Object.entries(WORK_MODE_MARKERS)
+      .filter(([mode]) => (mode === 'remote' ? job.isRemote : false) || WORK_MODE_MARKERS[mode].some((m) => haystack.includes(m)))
+      .map(([mode]) => mode);
+    const matches = ctx.workModes.some((pref) => jobModes.includes(pref.trim().toLowerCase()));
+    scores.push(jobModes.length === 0 ? PREFERENCE_NEUTRAL : matches ? PREFERENCE_MATCH : PREFERENCE_MISMATCH);
+  }
+
+  if (hasDomainPref) {
+    const domainHaystack = `${job.companyName} ${job.title} ${job.description.slice(0, 1500)}`;
+    const matches = ctx.domainPreferences.some((domain) => containsWord(domainHaystack, domain));
+    scores.push(matches ? PREFERENCE_MATCH : PREFERENCE_NEUTRAL);
+  }
+
+  return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
 }
