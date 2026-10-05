@@ -69,6 +69,10 @@ export interface AppConfig {
     /** Reject postings older than this. A posting with no extractable date
      * is kept (see common/date.util.ts) — this only rejects provable staleness. */
     maxPostingAgeDays: number;
+    /** Minimum retrieval score (0-100) for an eligible job to be saved. */
+    retrievalFloor: number;
+    /** How far back saved-but-unanalyzed jobs compete for Groq slots. */
+    analysisBacklogDays: number;
   };
   staleApplicationDays: number;
   scraping: {
@@ -122,6 +126,8 @@ export default (): AppConfig => ({
     analysisConcurrency: int('INGEST_ANALYSIS_CONCURRENCY', 1),
     triggerToken: str('INGEST_TRIGGER_TOKEN'),
     maxPostingAgeDays: int('INGEST_MAX_POSTING_AGE_DAYS', 2),
+    retrievalFloor: int('INGEST_RETRIEVAL_FLOOR', 40),
+    analysisBacklogDays: int('INGEST_ANALYSIS_BACKLOG_DAYS', 30),
   },
 
   staleApplicationDays: int('STALE_APPLICATION_DAYS', 7),

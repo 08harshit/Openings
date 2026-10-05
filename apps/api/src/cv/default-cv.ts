@@ -12,17 +12,17 @@ const DEFAULT_TARGET_ROLES = [
   'server-side', 'server side',
 ];
 
-/** Seeded from the old OFF_TARGET_TITLE_MARKERS constant in text.util.ts. */
+/** Seeded from the old OFF_TARGET_TITLE_MARKERS constant in text.util.ts,
+ * minus the adjacent engineering roles (platform/devops/SRE/data/security/
+ * solutions/ML/AI) — those now reach the retrieval score and rank lower
+ * instead of being hard-rejected (processing-pipeline spec §3). */
 const DEFAULT_EXCLUDED_ROLES = [
-  'sales engineer', 'support engineer', 'solutions engineer',
-  'field engineer', 'hardware engineer', 'mechanical engineer',
-  'electrical engineer', 'civil engineer', 'network engineer',
-  'security engineer', 'data engineer', 'ml engineer',
-  'machine learning engineer', 'ai engineer', 'qa engineer',
-  'test engineer', 'ios engineer', 'android engineer',
-  'mobile engineer', 'frontend engineer', 'front-end engineer',
-  'front end engineer', 'site reliability', 'devops engineer',
-  'platform engineer', 'embedded engineer',
+  'sales engineer', 'support engineer', 'field engineer',
+  'hardware engineer', 'mechanical engineer', 'electrical engineer',
+  'civil engineer', 'network engineer', 'qa engineer', 'test engineer',
+  'ios engineer', 'android engineer', 'mobile engineer',
+  'frontend engineer', 'front-end engineer', 'front end engineer',
+  'embedded engineer',
   'ios', 'android', 'react native', 'flutter',
 ];
 
