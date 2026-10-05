@@ -42,3 +42,18 @@ export interface RawSkillGapResponse {
   required_skills: Array<{ name: string; required: boolean }>;
   summary_text: string;
 }
+
+export interface RawLlmEvaluationResponse {
+  roleFit: number;
+  seniorityFit: number;
+  requiredSkillFit: number;
+  preferredSkillFit: number;
+  experienceFit: number;
+  domainFit: number;
+  criticalMismatch: boolean;
+  matchedSkills: string[];
+  missingSkills: string[];
+  criticalGaps: string[];
+  summary: string;
+  confidence: number;
+}

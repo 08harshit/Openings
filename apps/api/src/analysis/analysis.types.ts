@@ -67,3 +67,51 @@ export interface RawSkillGapResponse {
   required_skills: Array<{ name: string; required: boolean }>;
   summary_text: string;
 }
+
+/** JSON Schema handed to Groq via response_format — see analysis.service.ts. */
+export const LLM_EVALUATION_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    roleFit: { type: 'integer', description: '0-100: how well the job title/role matches the candidate\'s target roles and current trajectory.' },
+    seniorityFit: { type: 'integer', description: '0-100: how well the job\'s seniority level matches the candidate\'s experience.' },
+    requiredSkillFit: { type: 'integer', description: '0-100: coverage of the JD\'s required/must-have skills by the candidate\'s CV.' },
+    preferredSkillFit: { type: 'integer', description: '0-100: coverage of the JD\'s nice-to-have skills by the candidate\'s CV.' },
+    experienceFit: { type: 'integer', description: '0-100: how well the candidate\'s years and type of experience match what the JD implies.' },
+    domainFit: { type: 'integer', description: '0-100: how well the candidate\'s industry/domain background matches this role\'s domain.' },
+    criticalMismatch: {
+      type: 'boolean',
+      description:
+        'true only for a disqualifying mismatch the fit scores above would hide — e.g. the posting requires ' +
+        'on-site presence incompatible with a remote-only candidate, or requires a clearance/authorization the ' +
+        'CV gives no evidence of. false otherwise, even if fit scores are low.',
+    },
+    matchedSkills: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Canonical, lowercase-hyphenated skill slugs the candidate has that this JD also asks for.',
+    },
+    missingSkills: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Canonical, lowercase-hyphenated skill slugs the JD asks for that the candidate\'s CV lacks.',
+    },
+    criticalGaps: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Short phrases naming the specific gap(s) behind a true criticalMismatch. Empty if criticalMismatch is false.',
+    },
+    summary: {
+      type: 'string',
+      description: 'One or two short sentences summarising the fit, no preamble, no restating the scores.',
+    },
+    confidence: {
+      type: 'integer',
+      description: '0-100: how confident this evaluation is, given how much detail the JD and CV provided.',
+    },
+  },
+  required: [
+    'roleFit', 'seniorityFit', 'requiredSkillFit', 'preferredSkillFit', 'experienceFit', 'domainFit',
+    'criticalMismatch', 'matchedSkills', 'missingSkills', 'criticalGaps', 'summary', 'confidence',
+  ],
+  additionalProperties: false,
+} as const;

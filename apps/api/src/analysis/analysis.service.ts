@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { normalizeSkillList, type SeniorityLevel, type SkillGapResult } from '@jobportal/shared';
+import { normalizeSkillList, type LlmJobEvaluation } from '@jobportal/shared';
 import { retry, type RetryDelayHint } from '../common/async.util';
 import { normalizeWhitespace } from '../common/text.util';
 import { CvService } from '../cv/cv.service';
@@ -8,28 +8,46 @@ import type {
   GroqChatRequest,
   GroqChatResponse,
   GroqErrorResponse,
-  RawSkillGapResponse,
+  RawLlmEvaluationResponse,
 } from './groq.types';
 
-const SYSTEM_PROMPT = `You score how well a candidate's CV fits a specific job description.
+const SYSTEM_PROMPT = `You evaluate how well a candidate's CV fits a specific job description, along several
+independent dimensions. Score each dimension generously for adjacent/transferable experience (e.g.
+Sequelize experience counts partially toward "any ORM" requirements; Kafka experience counts toward
+general message-queue familiarity) but do not invent skills the CV does not support.
 
-Score generously for adjacent/transferable experience (e.g. Sequelize experience
-counts partially toward "any ORM" requirements; Kafka experience counts toward
-general message-queue familiarity) but do not invent skills the CV does not
-support. Extract skill names as short canonical slugs: lowercase, hyphenated,
-no version numbers unless the JD is version-specific (e.g. "nestjs" not
-"NestJS 10", "postgresql" not "Postgres 15"). Prefer well-known conventional
-slugs (nodejs, postgresql, rest-api, ci-cd, aws) over ad-hoc phrasing.
+Use this scale consistently for every 0-100 fit dimension:
+0-20   clearly unsuitable
+21-40  weak fit
+41-60  possible but significant gaps
+61-75  decent fit
+76-89  strong fit
+90-100 exceptional fit
 
-Respond with ONLY a single JSON object — no markdown fences, no commentary —
-matching exactly this shape:
+A criticalMismatch is NOT "low fit" — it is a disqualifying issue the fit scores above would otherwise
+hide, such as a posting requiring on-site presence incompatible with a remote-only candidate, or a
+security clearance / work authorization the CV gives no evidence of. Set it true only in that case,
+with the specific reason(s) in criticalGaps. Most jobs have criticalMismatch: false even with low fit
+scores — that is just a weak match, not a critical one.
+
+Extract skill names as short canonical slugs: lowercase, hyphenated, no version numbers unless the JD
+is version-specific. Prefer well-known conventional slugs (nodejs, postgresql, rest-api, ci-cd, aws)
+over ad-hoc phrasing.
+
+Respond with ONLY a single JSON object — no markdown fences, no commentary — matching exactly this shape:
 {
-  "match_score": <integer 0-100>,
-  "seniority_guess": "entry" | "mid" | "senior" | "unknown",
-  "matched_skills": [<canonical skill slug strings the candidate already has>],
-  "missing_skills": [<canonical skill slug strings the JD wants but the CV lacks>],
-  "required_skills": [{ "name": <canonical skill slug>, "required": <boolean> }, ...],
-  "summary_text": "<one or two short sentences on the fit, no preamble>"
+  "roleFit": <integer 0-100>,
+  "seniorityFit": <integer 0-100>,
+  "requiredSkillFit": <integer 0-100>,
+  "preferredSkillFit": <integer 0-100>,
+  "experienceFit": <integer 0-100>,
+  "domainFit": <integer 0-100>,
+  "criticalMismatch": <boolean>,
+  "matchedSkills": [<canonical skill slug strings the candidate already has>],
+  "missingSkills": [<canonical skill slug strings the JD wants but the CV lacks>],
+  "criticalGaps": [<short phrases naming the specific critical mismatch reason(s), empty if none>],
+  "summary": "<one or two short sentences on the fit, no preamble>",
+  "confidence": <integer 0-100>
 }`;
 
 /**
@@ -90,7 +108,7 @@ export class AnalysisService {
   async analyze(
     userId: string,
     job: { title: string; companyName: string | null; location: string | null; description: string },
-  ): Promise<SkillGapResult | null> {
+  ): Promise<LlmJobEvaluation | null> {
     if (!this.isConfigured) {
       this.logger.warn('GROQ_API_KEY not set — skipping skill-gap analysis');
       return null;
@@ -119,7 +137,7 @@ export class AnalysisService {
         onRetry: (_e, attempt, delay) =>
           this.logger.warn(`Retrying Groq analysis (attempt ${attempt}) in ${Math.round(delay)}ms`),
       });
-      return raw ? toSkillGapResult(raw) : null;
+      return raw ? toLlmJobEvaluation(raw) : null;
     } catch (error) {
       this.logger.error(
         `Skill-gap analysis failed for "${job.title}": ${error instanceof Error ? error.message : error}`,
@@ -128,7 +146,7 @@ export class AnalysisService {
     }
   }
 
-  private async callGroq(userPrompt: string): Promise<RawSkillGapResponse | null> {
+  private async callGroq(userPrompt: string): Promise<RawLlmEvaluationResponse | null> {
     const body: GroqChatRequest = {
       model: this.model,
       max_tokens: this.maxTokens,
@@ -170,7 +188,7 @@ export class AnalysisService {
     if (!content) return null;
 
     try {
-      return JSON.parse(content) as RawSkillGapResponse;
+      return JSON.parse(content) as RawLlmEvaluationResponse;
     } catch (error) {
       this.logger.warn(`Could not parse Groq response as JSON: ${error}`);
       return null;
@@ -250,16 +268,38 @@ ${description}
 Score this candidate's fit for this specific job posting. Respond with the JSON object only.`;
 }
 
-function toSkillGapResult(raw: RawSkillGapResponse): SkillGapResult {
-  const score = Number.isFinite(raw.match_score) ? Math.round(raw.match_score) : 0;
+const FIT_FIELDS = [
+  'roleFit', 'seniorityFit', 'requiredSkillFit', 'preferredSkillFit', 'experienceFit', 'domainFit',
+] as const;
+
+function clampFit(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? normalizeSkillList(value.filter((v): v is string => typeof v === 'string')) : [];
+}
+
+export function toLlmJobEvaluation(raw: RawLlmEvaluationResponse): LlmJobEvaluation {
+  const result: Record<string, number> = {};
+  for (const field of FIT_FIELDS) result[field] = clampFit((raw as unknown as Record<string, unknown>)[field]);
+
   return {
-    match_score: Math.min(100, Math.max(0, score)),
-    seniority_guess: (raw.seniority_guess ?? 'unknown') as SeniorityLevel,
-    matched_skills: normalizeSkillList(raw.matched_skills ?? []),
-    missing_skills: normalizeSkillList(raw.missing_skills ?? []),
-    required_skills: (raw.required_skills ?? [])
-      .map((s) => ({ name: normalizeSkillList([s.name])[0], required: Boolean(s.required) }))
-      .filter((s): s is { name: string; required: boolean } => Boolean(s.name)),
-    summary_text: (raw.summary_text ?? '').trim().slice(0, 500),
+    roleFit: result.roleFit,
+    seniorityFit: result.seniorityFit,
+    requiredSkillFit: result.requiredSkillFit,
+    preferredSkillFit: result.preferredSkillFit,
+    experienceFit: result.experienceFit,
+    domainFit: result.domainFit,
+    criticalMismatch: raw.criticalMismatch === true,
+    matchedSkills: toStringArray(raw.matchedSkills),
+    missingSkills: toStringArray(raw.missingSkills),
+    criticalGaps: Array.isArray(raw.criticalGaps)
+      ? raw.criticalGaps.filter((g): g is string => typeof g === 'string')
+      : [],
+    summary: (raw.summary ?? '').trim().slice(0, 500),
+    confidence: clampFit(raw.confidence),
   };
 }
