@@ -111,7 +111,7 @@ Rules: numbers greater than 20 are ignored (company age, "20+ years in business"
 
 ### `extractMentionedSkills(text): string[]`
 
-Word-bounded, case-insensitive scan for every `SEED_SKILLS` canonical name and alias from [packages/shared/src/skills.ts](../../../packages/shared/src/skills.ts). Canonical slug hyphens match a space or hyphen (`rest-api` matches "REST API" and "rest-api"). Ambiguous English words are never matched on their own: `go`, `rest`, `express`, `spring`, `nest`, `node`, `ts`, `js`, `py` (their unambiguous forms — `golang`, `restful`, `express.js`, `spring boot`, `nest.js`, `node.js` — still match). Returns de-duplicated canonical slugs.
+Word-bounded, case-insensitive scan for every `SEED_SKILLS` canonical name and alias from [packages/shared/src/skills.ts](../../../packages/shared/src/skills.ts). Canonical slug hyphens match a space or hyphen (`rest-api` matches "REST API" and "rest-api"). Ambiguous English words are never matched on their own: `go`, `rest`, `express`, `spring`, `nest`, `node`, `next`, `bull`, `ws`, `ts`, `js`, `py`, `auth`, `eda`, `kube` (their unambiguous forms — `golang`, `restful`, `express.js`, `spring boot`, `nest.js`, `node.js`, `next.js`, `bullmq`, `websockets`, `oauth2` — still match). Matching uses alphanumeric lookarounds rather than `\b` so terms like `c#`, `.net` and `node.js` match correctly, and `java` does not match inside `javascript`. Returns de-duplicated canonical slugs.
 
 ### Location and remote
 
@@ -126,7 +126,7 @@ Word-bounded, case-insensitive scan for every `SEED_SKILLS` canonical name and a
 | `excluded_department` | `department` contains (word-bounded) any `profile.excluded_departments` entry |
 | `excluded_role` | title contains any `profile.excluded_roles` entry |
 | `leadership_or_intern` | title contains `staff` (except in "technical staff"), `principal`, `director`, `head of`, `vp`, `vice president`, `manager`, `architect`, `intern`, `internship` |
-| `non_engineering_title` | title matches neither a `profile.target_roles` entry nor a generic engineering marker: `engineer`, `engineering`, `developer`, `development`, `sde`, `swe`, `programmer`, `technical staff`, `mts` |
+| `non_engineering_title` | title matches neither a `profile.target_roles` entry nor a generic engineering marker: `engineer`, `engineering`, `developer`, `sde`, `swe`, `programmer`, `technical staff`, `mts` (not `development` — it would admit "Business Development Executive") |
 | `experience_too_high` | `requiredYearsMin` > ceiling, where ceiling = `profile.seniority_max_years` if set, else `profile.experience_years + 3` if `experience_years` is set; skipped when both are null |
 | `location_mismatch` | `location` is non-null and `isIndiaOrRemote(location, profile.preferred_locations)` is false |
 
