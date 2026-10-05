@@ -96,4 +96,8 @@ export interface RawJobCandidate {
   /** yyyy-mm-dd, best-effort extracted from the listing text. Null when no
    * recognisable date signal was found — see common/date.util.ts. */
   postedDateIso: string | null;
+  /** Stable job ID from the source ATS (Greenhouse/Lever/Ashby). Absent for scraped pages. */
+  externalId?: string | null;
+  /** ATS-provided department(s), comma-joined. Absent for scraped pages. */
+  department?: string | null;
 }

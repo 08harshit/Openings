@@ -1,4 +1,4 @@
-import { looksLikeRelevantRole } from './text.util';
+import { containsWord, looksLikeRelevantRole } from './text.util';
 
 const TARGET_ROLES = [
   'backend', 'back end', 'back-end',
@@ -81,5 +81,19 @@ describe('looksLikeRelevantRole', () => {
     expect(looksLikeRelevantRole('Graphic Designer', null, ['   '], [], [])).toBe(false);
     // A blank entry in excludedRoles must not reject every title either.
     expect(looksLikeRelevantRole('Backend Engineer', null, TARGET_ROLES, [''], [])).toBe(true);
+  });
+});
+
+describe('containsWord', () => {
+  it('matches a whole word case-insensitively', () => {
+    expect(containsWord('Senior Backend Engineer', 'backend')).toBe(true);
+  });
+
+  it('does not match inside a longer word', () => {
+    expect(containsWord('Internal Tools Engineer', 'intern')).toBe(false);
+  });
+
+  it('never matches a blank marker', () => {
+    expect(containsWord('Anything at all', '   ')).toBe(false);
   });
 });

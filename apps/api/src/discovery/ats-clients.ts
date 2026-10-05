@@ -26,6 +26,8 @@ export interface AtsJobListing {
   /** Plain-text job description, when the platform includes one — this is
    * what the Groq skill-gap analysis is actually scored against. */
   description: string | null;
+  /** The ATS's own job ID, used for dedup. Null when the platform omits it. */
+  externalId: string | null;
 }
 
 export interface AtsMatch {
@@ -94,6 +96,7 @@ async function tryGreenhouse(slug: string): Promise<AtsMatch | null> {
 
     const body = (await res.json()) as {
       jobs?: Array<{
+        id?: number;
         title?: string;
         absolute_url?: string;
         updated_at?: string;
@@ -116,6 +119,7 @@ async function tryGreenhouse(slug: string): Promise<AtsMatch | null> {
         // relevance signal than parsing the title text.
         department: j.departments?.map((d) => d.name).filter(Boolean).join(', ') || null,
         description: j.content ? stripHtml(j.content) : null,
+        externalId: j.id !== undefined && j.id !== null ? String(j.id) : null,
       }));
 
     return { atsType: 'greenhouse', boardToken: slug, jobs };
@@ -131,6 +135,7 @@ async function tryLever(slug: string): Promise<AtsMatch | null> {
     if (!res.ok) return null;
 
     const body = (await res.json()) as Array<{
+      id?: string;
       text?: string;
       hostedUrl?: string;
       createdAt?: number;
@@ -148,6 +153,7 @@ async function tryLever(slug: string): Promise<AtsMatch | null> {
         postedDateIso: j.createdAt ? toDateOnly(new Date(j.createdAt).toISOString()) : null,
         department: j.categories?.team ?? j.categories?.department ?? null,
         description: j.descriptionPlain ?? null,
+        externalId: j.id ?? null,
       }));
 
     return { atsType: 'lever', boardToken: slug, jobs };
@@ -164,6 +170,7 @@ async function tryAshby(slug: string): Promise<AtsMatch | null> {
 
     const body = (await res.json()) as {
       jobs?: Array<{
+        id?: string;
         title?: string;
         jobUrl?: string;
         location?: string;
@@ -187,6 +194,7 @@ async function tryAshby(slug: string): Promise<AtsMatch | null> {
         postedDateIso: toDateOnly(j.publishedAt),
         department: j.department ?? null,
         description: j.descriptionPlain ?? null,
+        externalId: j.id ?? null,
       }));
 
     return { atsType: 'ashby', boardToken: slug, jobs };

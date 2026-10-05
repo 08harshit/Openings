@@ -222,7 +222,7 @@ function escapeRegex(s: string): string {
  * otherwise turn one stray empty string in a profile's target_roles into
  * "accept every job," or one in excluded_roles into "reject every job."
  */
-function containsWord(haystack: string, marker: string): boolean {
+export function containsWord(haystack: string, marker: string): boolean {
   const trimmed = marker.trim();
   if (!trimmed) return false;
   return new RegExp(`\\b${escapeRegex(trimmed)}\\b`, 'i').test(haystack);
