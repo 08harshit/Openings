@@ -281,6 +281,11 @@
   gap: 6px;
   margin-top: 4px;
 }
+.match-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
 .column-empty {
   padding: 16px;

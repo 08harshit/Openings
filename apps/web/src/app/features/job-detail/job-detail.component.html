@@ -16,7 +16,10 @@
             · <span class="seniority">{{ jobData.seniority_guess }}</span>
           </p>
         </div>
-        <app-match-badge [score]="jobData.match_score" />
+        <div class="score-group">
+          <app-match-badge [score]="jobData.final_score" />
+          <app-recommendation-chip [recommendation]="jobData.recommendation" />
+        </div>
       </div>
 
       <div class="header-actions">
@@ -32,6 +35,60 @@
         <p class="summary">{{ jobData.summary_text }}</p>
       }
     </div>
+
+    @if (jobData.llm_evaluation; as evaluation) {
+      <div class="card score-breakdown">
+        <h2>Why this score</h2>
+
+        @if (evaluation.critical_mismatch) {
+          <p class="critical-warning">
+            ⚠ Critical mismatch
+            @if (evaluation.critical_gaps.length > 0) {
+              — {{ evaluation.critical_gaps.join('; ') }}
+            }
+          </p>
+        }
+
+        <div class="score-row">
+          <span class="score-label">Retrieval</span>
+          <div class="score-bar-track">
+            <div class="score-bar-fill" [style.width.%]="jobData.retrieval_score ?? 0"></div>
+          </div>
+          <span class="score-value">{{ jobData.retrieval_score ?? '—' }}</span>
+        </div>
+
+        <div class="score-row">
+          <span class="score-label">LLM fit</span>
+          <div class="score-bar-track">
+            <div class="score-bar-fill" [style.width.%]="evaluation.llm_score"></div>
+          </div>
+          <span class="score-value">{{ evaluation.llm_score }}</span>
+        </div>
+
+        <div class="score-row">
+          <span class="score-label">Freshness</span>
+          <span class="score-text">{{ postedAgo(jobData.posted_date) }}</span>
+        </div>
+
+        <div class="score-row">
+          <span class="score-label">Preference</span>
+          <div class="score-bar-track">
+            <div class="score-bar-fill" [style.width.%]="jobData.preference_score ?? 0"></div>
+          </div>
+          <span class="score-value">{{ jobData.preference_score ?? '—' }}</span>
+        </div>
+
+        <h3>LLM fit breakdown</h3>
+        <div class="sub-fits">
+          @for (fit of llmSubFits; track fit.key) {
+            <div class="sub-fit">
+              <span class="sub-fit-label">{{ fit.label }}</span>
+              <span class="sub-fit-value">{{ evaluation[fit.key] }}</span>
+            </div>
+          }
+        </div>
+      </div>
+    }
 
     <div class="grid">
       <div class="card">

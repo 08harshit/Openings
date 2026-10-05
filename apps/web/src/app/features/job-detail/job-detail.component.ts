@@ -5,13 +5,21 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { JOB_STATUS_LABELS, type JobDetail, type JobStatus } from '@jobportal/shared';
 import { ApiService } from '../../core/api.service';
 import { MatchBadgeComponent } from '../../shared/match-badge.component';
+import { RecommendationChipComponent } from '../../shared/recommendation-chip.component';
 import { SkillChipsComponent } from '../../shared/skill-chips.component';
 import { StatusSelectComponent } from '../../shared/status-select.component';
 
 @Component({
   selector: 'app-job-detail',
   standalone: true,
-  imports: [DatePipe, FormsModule, MatchBadgeComponent, SkillChipsComponent, StatusSelectComponent],
+  imports: [
+    DatePipe,
+    FormsModule,
+    MatchBadgeComponent,
+    RecommendationChipComponent,
+    SkillChipsComponent,
+    StatusSelectComponent,
+  ],
   templateUrl: './job-detail.component.html',
   styleUrl: './job-detail.component.css',
 })
@@ -80,6 +88,29 @@ export class JobDetailComponent {
       });
     });
   }
+
+  /** "Posted 3 days ago" / "Posted today" / "Posted date unknown" — freshness
+   * isn't stored as a 0-100 score anywhere (only used transiently when
+   * final_score is computed), so the detail view shows the real date
+   * instead of a fabricated bar. */
+  postedAgo(postedDate: string | null): string {
+    if (!postedDate) return 'Posted date unknown';
+    const posted = new Date(postedDate);
+    if (Number.isNaN(posted.getTime())) return 'Posted date unknown';
+    const days = Math.floor((Date.now() - posted.getTime()) / (1000 * 60 * 60 * 24));
+    if (days <= 0) return 'Posted today';
+    if (days === 1) return 'Posted yesterday';
+    return `Posted ${days} days ago`;
+  }
+
+  readonly llmSubFits: Array<{ key: keyof NonNullable<JobDetail['llm_evaluation']>; label: string }> = [
+    { key: 'role_fit', label: 'Role' },
+    { key: 'seniority_fit', label: 'Seniority' },
+    { key: 'required_skill_fit', label: 'Required skills' },
+    { key: 'preferred_skill_fit', label: 'Preferred skills' },
+    { key: 'experience_fit', label: 'Experience' },
+    { key: 'domain_fit', label: 'Domain' },
+  ];
 
   deleteJob(): void {
     const job = this.job();

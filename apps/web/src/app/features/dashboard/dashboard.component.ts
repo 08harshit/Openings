@@ -8,21 +8,31 @@ import {
   SENIORITY_LEVELS,
   type IngestRunStatus,
   type JobListItem,
+  type JobQuery,
   type JobStatus,
   type SeniorityLevel,
 } from '@jobportal/shared';
 import { ApiService, type JobStatsResponse } from '../../core/api.service';
 import { MatchBadgeComponent } from '../../shared/match-badge.component';
+import { RecommendationChipComponent } from '../../shared/recommendation-chip.component';
 import { SkillChipsComponent } from '../../shared/skill-chips.component';
 import { StatusSelectComponent } from '../../shared/status-select.component';
 import { AddJobDialogComponent } from './add-job-dialog.component';
 
 type ViewMode = 'table' | 'kanban';
+type SortOption = NonNullable<JobQuery['sort']>;
 
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [FormsModule, MatchBadgeComponent, SkillChipsComponent, StatusSelectComponent, AddJobDialogComponent],
+  imports: [
+    FormsModule,
+    MatchBadgeComponent,
+    RecommendationChipComponent,
+    SkillChipsComponent,
+    StatusSelectComponent,
+    AddJobDialogComponent,
+  ],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.css',
 })
@@ -53,8 +63,16 @@ export class DashboardComponent implements OnDestroy, AfterViewChecked {
   seniority: SeniorityLevel | '' = '';
   staleOnly = false;
   unscoredOnly = false;
+  sort = signal<SortOption>('final_score');
   missingSkill = signal<string | null>(null);
   statusFilter = signal<JobStatus[]>([]);
+
+  readonly sortOptions: Array<{ value: SortOption; label: string }> = [
+    { value: 'final_score', label: 'Best match' },
+    { value: 'scraped_at', label: 'Newest' },
+    { value: 'posted_date', label: 'Posted date' },
+    { value: 'title', label: 'Title' },
+  ];
 
   readonly kanbanColumns = computed(() => {
     const byStatus = new Map<JobStatus, JobListItem[]>();
@@ -93,7 +111,7 @@ export class DashboardComponent implements OnDestroy, AfterViewChecked {
         unscored_only: this.unscoredOnly || undefined,
         missing_skill: this.missingSkill() ?? undefined,
         status: this.statusFilter().length ? this.statusFilter() : undefined,
-        sort: 'scraped_at',
+        sort: this.sort(),
         direction: 'desc',
         page: 1,
         page_size: 200,

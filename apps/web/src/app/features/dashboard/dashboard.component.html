@@ -66,6 +66,12 @@
       }
     </select>
 
+    <select class="input" [ngModel]="sort()" (ngModelChange)="sort.set($event); applyFilters()">
+      @for (option of sortOptions; track option.value) {
+        <option [value]="option.value">{{ option.label }}</option>
+      }
+    </select>
+
     <label class="checkbox">
       <input type="checkbox" [(ngModel)]="staleOnly" (change)="applyFilters()" />
       Stale only
@@ -124,7 +130,10 @@
               </td>
               <td>{{ job.location || '—' }}</td>
               <td class="seniority-cell">{{ job.seniority_guess }}</td>
-              <td><app-match-badge [score]="job.match_score" /></td>
+              <td class="match-cell">
+                <app-match-badge [score]="job.final_score" />
+                <app-recommendation-chip [recommendation]="job.recommendation" />
+              </td>
               <td class="skills-cell" (click)="$event.stopPropagation()">
                 <app-skill-chips
                   [skills]="job.missing_skills"
@@ -178,7 +187,8 @@
                 <div class="kanban-title">{{ job.title }}</div>
                 <div class="kanban-company">{{ job.company_name || '—' }}</div>
                 <div class="kanban-footer">
-                  <app-match-badge [score]="job.match_score" />
+                  <app-match-badge [score]="job.final_score" />
+                  <app-recommendation-chip [recommendation]="job.recommendation" />
                   @if (job.is_stale) {
                     <span class="stale-dot">Stale</span>
                   }

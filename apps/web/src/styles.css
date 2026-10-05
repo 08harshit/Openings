@@ -23,6 +23,17 @@
   --color-unscored: #6b7280;
   --color-unscored-bg: #eef0f3;
 
+  --color-apply-now: #0f7a3d;
+  --color-apply-now-bg: #dcf4e6;
+  --color-strong-match: #0e7a7a;
+  --color-strong-match-bg: #dcf2f2;
+  --color-consider: #b8860b;
+  --color-consider-bg: #fdf3dc;
+  --color-low-priority: #c2740f;
+  --color-low-priority-bg: #fde9d4;
+  --color-skip: #6b7280;
+  --color-skip-bg: #eef0f3;
+
   --radius-sm: 6px;
   --radius-md: 10px;
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
@@ -151,6 +162,12 @@ textarea.input:focus {
 .badge-partial { background: var(--color-partial-bg); color: var(--color-partial); }
 .badge-weak { background: var(--color-weak-bg); color: var(--color-weak); }
 .badge-unscored { background: var(--color-unscored-bg); color: var(--color-unscored); }
+
+.badge-apply_now { background: var(--color-apply-now-bg); color: var(--color-apply-now); }
+.badge-strong_match { background: var(--color-strong-match-bg); color: var(--color-strong-match); }
+.badge-consider { background: var(--color-consider-bg); color: var(--color-consider); }
+.badge-low_priority { background: var(--color-low-priority-bg); color: var(--color-low-priority); }
+.badge-skip { background: var(--color-skip-bg); color: var(--color-skip); }
 
 .chip {
   display: inline-flex;
