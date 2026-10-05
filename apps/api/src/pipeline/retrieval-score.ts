@@ -87,7 +87,7 @@ function locationPoints(job: NormalizedJob, profile: CvProfile): number {
   return isIndiaOrRemote(job.location, profile.preferred_locations) ? RETRIEVAL_WEIGHTS.location : 0;
 }
 
-function freshnessPoints(postedDateIso: string | null, now: Date): number {
+export function freshnessPoints(postedDateIso: string | null, now: Date): number {
   if (!postedDateIso) return FRESHNESS_UNKNOWN;
   const posted = new Date(postedDateIso);
   if (Number.isNaN(posted.getTime())) return FRESHNESS_UNKNOWN;

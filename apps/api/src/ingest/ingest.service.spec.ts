@@ -11,12 +11,13 @@ import {
   toAnalysisCandidates,
   type BacklogRow,
 } from './ingest.service';
-import type { CvProfile } from '@jobportal/shared';
+import type { CvProfile, LlmJobEvaluation } from '@jobportal/shared';
 import type { RawJobCandidate } from '../firecrawl/firecrawl.types';
 import { toDateOnlyIso } from '../common/date.util';
 import { normalizeCandidate } from '../pipeline/normalize';
 import type { ScoredJob } from '../pipeline/evaluate';
 import type { ScoringContext } from '../pipeline/retrieval-score';
+import type { InsertedJob } from './ingest.service';
 
 function candidate(overrides: Partial<RawJobCandidate> = {}): RawJobCandidate {
   return {
@@ -505,5 +506,154 @@ describe('atsListingToCandidate', () => {
     expect(c.department).toBe('Engineering');
     expect(c.source).toBe('ats_api');
     expect(c.companyNameHint).toBe('Acme');
+  });
+});
+
+function llmEvaluation(overrides: Partial<LlmJobEvaluation> = {}): LlmJobEvaluation {
+  return {
+    roleFit: 80,
+    seniorityFit: 70,
+    requiredSkillFit: 90,
+    preferredSkillFit: 60,
+    experienceFit: 75,
+    domainFit: 50,
+    criticalMismatch: false,
+    matchedSkills: ['nodejs'],
+    missingSkills: ['kubernetes'],
+    criticalGaps: [],
+    summary: 'Strong backend match.',
+    confidence: 85,
+    ...overrides,
+  };
+}
+
+describe('IngestService.analyzeAndPersist — final score wiring', () => {
+  function buildServiceWithAnalysis(evaluation: LlmJobEvaluation | null) {
+    const upserts: Array<{ table: string; payload: Record<string, unknown> }> = [];
+    const updates: Array<{ table: string; payload: Record<string, unknown> }> = [];
+    const fromResult = (table: string) => ({
+      upsert: (payload: Record<string, unknown>) => {
+        upserts.push({ table, payload });
+        return { error: null };
+      },
+      update: (payload: Record<string, unknown>) => {
+        updates.push({ table, payload });
+        return { eq: async () => ({ error: null }) };
+      },
+    });
+    const supabase = {
+      admin: { from: (table: string) => fromResult(table) },
+      unwrap: (result: { data: unknown; error: unknown }) => result.data ?? [],
+    };
+    const analysis = {
+      isConfigured: true,
+      analyze: async () => evaluation,
+    };
+    const skills = { ensure: async () => new Map<string, string>() };
+    const cv = {
+      getSnapshot: async () => ({
+        profile: {
+          id: 'p1',
+          user_id: 'user-1',
+          raw_cv_text: null,
+          experience_years: 2,
+          current_title: null,
+          updated_at: '2026-10-05T00:00:00Z',
+          target_roles: [],
+          excluded_roles: [],
+          excluded_departments: [],
+          preferred_locations: [],
+          excluded_companies: [],
+          seniority_min_years: null,
+          seniority_max_years: null,
+          work_modes: [],
+          employment_types: [],
+          domain_preferences: [],
+          domain_exclusions: [],
+        } as CvProfile,
+        skills: [],
+      }),
+    };
+    const service = new IngestService(
+      supabase as any,
+      {} as any, // firecrawl
+      analysis as any,
+      {} as any, // companies
+      skills as any,
+      {} as any, // resolver
+      {
+        get: (key: string, fallback?: unknown) => {
+          const weights: Record<string, number> = {
+            'ranking.weightRetrieval': 35,
+            'ranking.weightLlm': 45,
+            'ranking.weightFreshness': 10,
+            'ranking.weightPreference': 10,
+          };
+          return weights[key] ?? fallback;
+        },
+      } as any,
+      cv as any,
+    );
+    return { service, upserts, updates };
+  }
+
+  function insertedJob(overrides: Partial<InsertedJob & { retrievalScore: number }> = {}) {
+    return {
+      id: 'job-1',
+      title: 'Backend Engineer',
+      companyName: 'Acme',
+      location: 'Remote',
+      description: 'A long enough job description to be analyzable by Groq, building backend services.',
+      retrievalScore: 70,
+      ...overrides,
+    } as any;
+  }
+
+  it('writes final_score and recommendation onto job_postings when Groq succeeds', async () => {
+    const { service, updates } = buildServiceWithAnalysis(llmEvaluation());
+
+    await (service as any).analyzeAndPersist('user-1', insertedJob());
+
+    const jobPostingsUpdate = updates.find((u) => u.table === 'job_postings' && 'final_score' in u.payload);
+    expect(jobPostingsUpdate).toBeDefined();
+    expect(jobPostingsUpdate!.payload.final_score).toEqual(expect.any(Number));
+    expect(jobPostingsUpdate!.payload.recommendation).toEqual(expect.any(String));
+  });
+
+  it('writes the full LLM breakdown and match_score alias onto skill_gap_analysis', async () => {
+    const { service, upserts } = buildServiceWithAnalysis(llmEvaluation({ requiredSkillFit: 90 }));
+
+    await (service as any).analyzeAndPersist('user-1', insertedJob());
+
+    const analysisUpsert = upserts.find((u) => u.table === 'skill_gap_analysis');
+    expect(analysisUpsert).toBeDefined();
+    expect(analysisUpsert!.payload.required_skill_fit).toBe(90);
+    expect(analysisUpsert!.payload.critical_mismatch).toBe(false);
+    expect(analysisUpsert!.payload.llm_score).toEqual(expect.any(Number));
+    expect(analysisUpsert!.payload.match_score).toBe(analysisUpsert!.payload.llm_score);
+  });
+
+  it('does nothing when Groq returns null (unconfigured or parse failure)', async () => {
+    const { service, upserts, updates } = buildServiceWithAnalysis(null);
+
+    const ok = await (service as any).analyzeAndPersist('user-1', insertedJob());
+
+    expect(ok).toBe(false);
+    expect(upserts).toEqual([]);
+    expect(updates).toEqual([]);
+  });
+
+  it('caps final_score contribution when criticalMismatch is true', async () => {
+    const { service: normalService, updates: normalUpdates } = buildServiceWithAnalysis(llmEvaluation({ criticalMismatch: false }));
+    const { service: mismatchService, updates: mismatchUpdates } = buildServiceWithAnalysis(
+      llmEvaluation({ criticalMismatch: true, roleFit: 100, seniorityFit: 100, requiredSkillFit: 100, preferredSkillFit: 100, experienceFit: 100, domainFit: 100 }),
+    );
+
+    await (normalService as any).analyzeAndPersist('user-1', insertedJob({ retrievalScore: 90 }));
+    await (mismatchService as any).analyzeAndPersist('user-1', insertedJob({ retrievalScore: 90 }));
+
+    const normalScore = normalUpdates.find((u) => u.table === 'job_postings')!.payload.final_score as number;
+    const mismatchScore = mismatchUpdates.find((u) => u.table === 'job_postings')!.payload.final_score as number;
+    expect(mismatchScore).toBeLessThan(normalScore);
   });
 });

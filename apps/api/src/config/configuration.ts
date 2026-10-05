@@ -74,6 +74,14 @@ export interface AppConfig {
     /** How far back saved-but-unanalyzed jobs compete for Groq slots. */
     analysisBacklogDays: number;
   };
+  ranking: {
+    /** Top-level final_score weights (spec §18.2) — need not sum to 100;
+     * combineFinalScore normalizes. */
+    weightRetrieval: number;
+    weightLlm: number;
+    weightFreshness: number;
+    weightPreference: number;
+  };
   staleApplicationDays: number;
   scraping: {
     httpTimeoutMs: number;
@@ -128,6 +136,13 @@ export default (): AppConfig => ({
     maxPostingAgeDays: int('INGEST_MAX_POSTING_AGE_DAYS', 2),
     retrievalFloor: int('INGEST_RETRIEVAL_FLOOR', 40),
     analysisBacklogDays: int('INGEST_ANALYSIS_BACKLOG_DAYS', 30),
+  },
+
+  ranking: {
+    weightRetrieval: int('RANKING_WEIGHT_RETRIEVAL', 35),
+    weightLlm: int('RANKING_WEIGHT_LLM', 45),
+    weightFreshness: int('RANKING_WEIGHT_FRESHNESS', 10),
+    weightPreference: int('RANKING_WEIGHT_PREFERENCE', 10),
   },
 
   staleApplicationDays: int('STALE_APPLICATION_DAYS', 7),

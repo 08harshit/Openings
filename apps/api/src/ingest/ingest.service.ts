@@ -21,9 +21,16 @@ import type { AtsJobListing } from '../discovery/ats-clients';
 import { scrapeCareerPage } from '../scraping/career-page-scraper';
 import { evaluateEligibility } from '../pipeline/eligibility';
 import { normalizeCandidate, type ScopedCandidate } from '../pipeline/normalize';
-import { scoreRetrieval, type RetrievalSignals, type ScoringContext } from '../pipeline/retrieval-score';
+import {
+  scoreRetrieval,
+  freshnessPoints,
+  RETRIEVAL_WEIGHTS,
+  type RetrievalSignals,
+  type ScoringContext,
+} from '../pipeline/retrieval-score';
 import { evaluateCandidates, type ScoredJob } from '../pipeline/evaluate';
 import { selectTopN } from '../pipeline/select';
+import { combineLlmFit, combineFinalScore, scorePreference } from '../pipeline/ranking';
 
 export interface InsertedJob {
   id: string;
@@ -31,6 +38,7 @@ export interface InsertedJob {
   companyName: string | null;
   location: string | null;
   description: string;
+  retrievalScore: number;
 }
 
 const ANALYSIS_POOL_QUERY_LIMIT = 200;
@@ -520,6 +528,7 @@ export class IngestService {
       companyName: job.companyName,
       location: job.location,
       description: job.description,
+      retrievalScore: score,
     };
   }
 
@@ -597,21 +606,64 @@ export class IngestService {
   private async analyzeAndPersist(userId: string, job: InsertedJob): Promise<boolean> {
     if (!job.description || job.description.trim().length < MIN_ANALYZABLE_DESCRIPTION) return false;
 
-    const result = await this.analysis.analyze(userId, {
+    const evaluation = await this.analysis.analyze(userId, {
       title: job.title,
       companyName: job.companyName,
       location: job.location,
       description: job.description,
     });
-    if (!result) return false;
+    if (!evaluation) return false;
+
+    const { profile } = await this.cv.getSnapshot(userId);
+    const normalizedJob = normalizeCandidate({
+      candidate: {
+        title: job.title,
+        url: '',
+        companyNameHint: job.companyName,
+        locationHint: job.location,
+        snippet: '',
+        markdown: job.description,
+        source: 'http_scrape',
+        postedDateIso: null,
+      },
+      companyId: '',
+      companyName: job.companyName ?? '',
+    });
+
+    const llmScore = combineLlmFit(evaluation);
+    const preferenceScore = scorePreference(normalizedJob, {
+      workModes: profile.work_modes,
+      domainPreferences: profile.domain_preferences,
+    });
+    const freshnessScore = freshnessPoints(null, new Date()) * (100 / RETRIEVAL_WEIGHTS.freshness);
+    const weights = {
+      retrieval: this.config.get<number>('ranking.weightRetrieval', 35),
+      llm: this.config.get<number>('ranking.weightLlm', 45),
+      freshness: this.config.get<number>('ranking.weightFreshness', 10),
+      preference: this.config.get<number>('ranking.weightPreference', 10),
+    };
+    const { finalScore, recommendation } = combineFinalScore(
+      { retrievalScore: job.retrievalScore, llmScore, freshnessScore, preferenceScore },
+      weights,
+    );
 
     const { error: analysisError } = await this.supabase.admin.from('skill_gap_analysis').upsert(
       {
         job_posting_id: job.id,
-        match_score: result.match_score,
-        matched_skills: result.matched_skills,
-        missing_skills: result.missing_skills,
-        summary_text: result.summary_text,
+        match_score: llmScore,
+        llm_score: llmScore,
+        confidence: evaluation.confidence,
+        critical_mismatch: evaluation.criticalMismatch,
+        critical_gaps: evaluation.criticalGaps,
+        role_fit: evaluation.roleFit,
+        seniority_fit: evaluation.seniorityFit,
+        required_skill_fit: evaluation.requiredSkillFit,
+        preferred_skill_fit: evaluation.preferredSkillFit,
+        experience_fit: evaluation.experienceFit,
+        domain_fit: evaluation.domainFit,
+        matched_skills: evaluation.matchedSkills,
+        missing_skills: evaluation.missingSkills,
+        summary_text: evaluation.summary,
         model: this.config.get<string>('groq.model'),
         analyzed_at: new Date().toISOString(),
       },
@@ -621,14 +673,21 @@ export class IngestService {
       this.logger.warn(`Could not save analysis for job ${job.id}: ${analysisError.message}`);
     }
 
-    if (result.seniority_guess !== 'unknown') {
-      await this.supabase.admin
-        .from('job_postings')
-        .update({ seniority_guess: result.seniority_guess })
-        .eq('id', job.id);
+    const { error: postingError } = await this.supabase.admin
+      .from('job_postings')
+      .update({ final_score: finalScore, recommendation, preference_score: preferenceScore })
+      .eq('id', job.id);
+    if (postingError) {
+      this.logger.warn(`Could not save final score for job ${job.id}: ${postingError.message}`);
     }
 
-    await this.persistJobSkills(job.id, result.required_skills);
+    await this.persistJobSkills(
+      job.id,
+      [...evaluation.matchedSkills, ...evaluation.missingSkills].map((name) => ({
+        name,
+        required: evaluation.missingSkills.includes(name),
+      })),
+    );
     return true;
   }
 
@@ -872,6 +931,7 @@ export function toAnalysisCandidates(
         companyName: row.company_name,
         location: row.location,
         description: row.description_raw ?? '',
+        retrievalScore: score,
       },
       score,
       postedDateIso: row.posted_date,
