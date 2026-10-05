@@ -54,9 +54,9 @@ export class JobsService {
 
     if (query.company_id) builder = builder.eq('company_id', query.company_id);
     if (query.seniority) builder = builder.eq('seniority_guess', query.seniority);
-    if (query.min_score !== undefined) builder = builder.gte('match_score', query.min_score);
-    if (query.max_score !== undefined) builder = builder.lte('match_score', query.max_score);
-    if (query.unscored_only) builder = builder.is('match_score', null);
+    if (query.min_score !== undefined) builder = builder.gte('final_score', query.min_score);
+    if (query.max_score !== undefined) builder = builder.lte('final_score', query.max_score);
+    if (query.unscored_only) builder = builder.is('final_score', null);
     if (query.missing_skill) {
       builder = builder.contains('missing_skills', JSON.stringify([query.missing_skill]));
     }
@@ -67,7 +67,7 @@ export class JobsService {
       );
     }
 
-    const sortColumn = query.sort ?? 'scraped_at';
+    const sortColumn = query.sort ?? 'final_score';
     const ascending = (query.direction ?? 'desc') === 'asc';
     builder = builder
       .order(sortColumn, { ascending, nullsFirst: false })
@@ -147,6 +147,8 @@ export class JobsService {
       notes,
       history,
       required_skills: requiredSkills,
+      llm_evaluation: this.toLlmEvaluation(row),
+      preference_score: row.preference_score,
     };
   }
 
@@ -176,6 +178,24 @@ export class JobsService {
       note_count: row.note_count,
       last_status_change_at: row.last_status_change_at,
       is_stale: isStale,
+      final_score: row.final_score,
+      recommendation: row.recommendation as JobListItem['recommendation'],
+    };
+  }
+
+  private toLlmEvaluation(row: EnrichedRow): JobDetail['llm_evaluation'] {
+    if (row.llm_score === null || row.role_fit === null) return null;
+    return {
+      llm_score: row.llm_score,
+      role_fit: row.role_fit,
+      seniority_fit: row.seniority_fit ?? 0,
+      required_skill_fit: row.required_skill_fit ?? 0,
+      preferred_skill_fit: row.preferred_skill_fit ?? 0,
+      experience_fit: row.experience_fit ?? 0,
+      domain_fit: row.domain_fit ?? 0,
+      critical_mismatch: row.critical_mismatch ?? false,
+      critical_gaps: asStringArray(row.critical_gaps),
+      confidence: row.confidence ?? 0,
     };
   }
 
@@ -351,6 +371,19 @@ interface EnrichedRow {
   analyzed_at: string | null;
   note_count: number;
   last_status_change_at: string | null;
+  final_score: number | null;
+  recommendation: string | null;
+  llm_score: number | null;
+  confidence: number | null;
+  critical_mismatch: boolean | null;
+  critical_gaps: unknown;
+  role_fit: number | null;
+  seniority_fit: number | null;
+  required_skill_fit: number | null;
+  preferred_skill_fit: number | null;
+  experience_fit: number | null;
+  domain_fit: number | null;
+  preference_score: number | null;
 }
 
 function asStringArray(value: unknown): string[] {

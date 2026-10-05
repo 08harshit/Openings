@@ -124,8 +124,8 @@ export class ListJobsQueryDto {
   unscored_only?: boolean;
 
   @IsOptional()
-  @IsIn(['match_score', 'scraped_at', 'posted_date', 'title'])
-  sort?: 'match_score' | 'scraped_at' | 'posted_date' | 'title';
+  @IsIn(['final_score', 'match_score', 'scraped_at', 'posted_date', 'title'])
+  sort?: 'final_score' | 'match_score' | 'scraped_at' | 'posted_date' | 'title';
 
   @IsOptional()
   @IsIn(['asc', 'desc'])
