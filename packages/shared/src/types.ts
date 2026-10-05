@@ -106,6 +106,8 @@ export interface JobPosting {
   source: JobSource;
   created_at: string;
   updated_at: string;
+  final_score: number | null;
+  recommendation: Recommendation | null;
 }
 
 export interface JobSkill {
@@ -171,6 +173,8 @@ export interface JobListItem {
   last_status_change_at: string | null;
   /** True when status = 'applied' and nothing changed for STALE_APPLICATION_DAYS. */
   is_stale: boolean;
+  final_score: number | null;
+  recommendation: Recommendation | null;
 }
 
 export interface JobDetail extends JobListItem {
@@ -180,6 +184,19 @@ export interface JobDetail extends JobListItem {
   notes: ApplicationNote[];
   history: StatusHistoryEntry[];
   required_skills: Array<{ name: string; required: boolean; category: SkillCategory }>;
+  llm_evaluation: {
+    llm_score: number;
+    role_fit: number;
+    seniority_fit: number;
+    required_skill_fit: number;
+    preferred_skill_fit: number;
+    experience_fit: number;
+    domain_fit: number;
+    critical_mismatch: boolean;
+    critical_gaps: string[];
+    confidence: number;
+  } | null;
+  preference_score: number | null;
 }
 
 export interface Paginated<T> {
@@ -200,7 +217,7 @@ export interface JobQuery {
   missing_skill?: string;
   stale_only?: boolean;
   unscored_only?: boolean;
-  sort?: 'match_score' | 'scraped_at' | 'posted_date' | 'title';
+  sort?: 'final_score' | 'match_score' | 'scraped_at' | 'posted_date' | 'title';
   direction?: 'asc' | 'desc';
   page?: number;
   page_size?: number;
@@ -218,6 +235,42 @@ export interface SkillGapResult {
   required_skills: Array<{ name: string; required: boolean }>;
   summary_text: string;
 }
+
+// ---------------------------------------------------------------------------
+// Reranking + final ranking (sub-project 4)
+// ---------------------------------------------------------------------------
+
+/** Groq's structured, multi-dimensional evaluation of one candidate/job pair.
+ * Replaces the single `match_score` as what the LLM actually returns —
+ * `combineLlmFit` (apps/api/src/pipeline/ranking.ts) collapses this to one
+ * number for the final-score formula. */
+export interface LlmJobEvaluation {
+  roleFit: number;
+  seniorityFit: number;
+  requiredSkillFit: number;
+  preferredSkillFit: number;
+  experienceFit: number;
+  domainFit: number;
+  /** A disqualifying mismatch the fit scores alone would hide (e.g. on-site-
+   * only vs. a remote-only candidate, or a clearance the CV shows no sign of). */
+  criticalMismatch: boolean;
+  matchedSkills: string[];
+  missingSkills: string[];
+  criticalGaps: string[];
+  summary: string;
+  /** 0-100 — Groq's own confidence in this evaluation. */
+  confidence: number;
+}
+
+export const RECOMMENDATION_LABELS = [
+  'APPLY_NOW',
+  'STRONG_MATCH',
+  'CONSIDER',
+  'LOW_PRIORITY',
+  'SKIP',
+] as const;
+
+export type Recommendation = (typeof RECOMMENDATION_LABELS)[number];
 
 // ---------------------------------------------------------------------------
 // Ingestion
