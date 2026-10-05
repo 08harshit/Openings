@@ -22,6 +22,15 @@ describe('parseRequiredYears', () => {
     expect(parseRequiredYears('5+ years experience overall, 2+ years with Kafka')).toBe(5);
   });
 
+  it.each([
+    ['1.5+ years of experience in Node.js', 1.5],
+    ['2.5 years of experience in backend development', 2.5],
+    ['1.5-3 years of experience', 1.5],
+    ['Minimum of 1.5 years of experience', 1.5],
+  ])('reads a decimal year count whole, not its fractional digit: %s', (text, expected) => {
+    expect(parseRequiredYears(text)).toBe(expected);
+  });
+
   it('does not double-count the upper end of a range', () => {
     expect(parseRequiredYears('2-4 years of experience')).toBe(2);
   });

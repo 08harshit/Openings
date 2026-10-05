@@ -74,6 +74,22 @@ const SCORING_CTX: ScoringContext = {
   now: new Date('2026-10-05T12:00:00Z'),
 };
 
+function backlogRow(overrides: Partial<BacklogRow> = {}): BacklogRow {
+  return {
+    id: 'row-1',
+    company_id: 'company-1',
+    title: 'Backend Engineer',
+    company_name: 'Acme',
+    location: 'Bangalore, India',
+    url: 'https://acme.com/careers/1',
+    description_raw: 'Node.js services',
+    posted_date: '2026-10-03',
+    source: 'ats_api',
+    retrieval_score: 77,
+    ...overrides,
+  };
+}
+
 describe('company exclusion filtering', () => {
   it('excludes a company matching an excluded name case-insensitively', () => {
     expect(isExcludedCompany('Razorpay', ['razorpay'])).toBe(true);
@@ -299,6 +315,129 @@ describe('IngestService.dedupAndInsert ordering and payload', () => {
     expect(upserts[0].external_id).toBe('gh-42');
     expect(upserts[0].retrieval_signals).toEqual(expect.objectContaining({ role: 25 }));
   });
+
+  it('checks existing hashes in URL-sized chunks and still catches a duplicate in a later chunk', async () => {
+    const inCalls: string[][] = [];
+    const upserts: Array<Record<string, unknown>> = [];
+    const jobs = Array.from({ length: 450 }, (_, i) => scoredJob({ url: `https://acme.com/careers/${i}` }, 90));
+    const alreadySaved = jobs[420].job.urlHash;
+    const fromResult = {
+      upsert: (payload: Record<string, unknown>) => {
+        upserts.push(payload);
+        const chain = { select: () => chain, maybeSingle: async () => ({ data: { id: `job-${upserts.length}` }, error: null }) };
+        return chain;
+      },
+      select: () => fromResult,
+      eq: () => fromResult,
+      in: async (_column: string, values: string[]) => {
+        inCalls.push(values);
+        return { data: values.filter((v) => v === alreadySaved).map((url_hash) => ({ url_hash })), error: null };
+      },
+    };
+    const supabase = {
+      admin: { from: () => fromResult },
+      unwrap: (result: { data: unknown; error: unknown }) => result.data ?? [],
+    };
+    const service = new IngestService(
+      supabase as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { get: (_key: string, fallback?: unknown) => fallback } as any,
+      {} as any,
+    );
+
+    const result = await (service as any).dedupAndInsert('user-1', jobs, 1000, []);
+
+    expect(inCalls.length).toBeGreaterThan(1);
+    expect(Math.max(...inCalls.map((values) => values.length))).toBeLessThanOrEqual(100);
+    expect(inCalls.flat()).toHaveLength(450);
+    expect(result.duplicates).toBe(1);
+    expect(upserts.map((p) => p.url_hash)).not.toContain(alreadySaved);
+  });
+});
+
+describe('IngestService.buildAnalysisPool', () => {
+  // A stateful stand-in for job_postings_enriched: filters on
+  // retrieval_score IS NULL, orders by retrieval_score DESC NULLS LAST, and
+  // applies score write-backs so a later query sees them.
+  function buildServiceWithBacklog(rows: BacklogRow[]) {
+    const table = rows.map((r) => ({ ...r }));
+    const updates: Array<{ id: string; retrieval_score: number }> = [];
+    const viewQuery = () => {
+      let onlyUnscored = false;
+      let ordered = false;
+      const query: any = {
+        select: () => query,
+        eq: () => query,
+        gte: () => query,
+        is: (column: string, value: unknown) => {
+          if (column === 'retrieval_score' && value === null) onlyUnscored = true;
+          return query;
+        },
+        order: () => {
+          ordered = true;
+          return query;
+        },
+        limit: async (n: number) => {
+          let result = table.filter((r) => !onlyUnscored || r.retrieval_score === null);
+          if (ordered) result = [...result].sort((a, b) => (b.retrieval_score ?? -1) - (a.retrieval_score ?? -1));
+          return { data: result.slice(0, n).map((r) => ({ ...r })), error: null };
+        },
+      };
+      return query;
+    };
+    const tableQuery = {
+      update: (patch: { retrieval_score: number }) => ({
+        eq: async (_column: string, id: string) => {
+          updates.push({ id, retrieval_score: patch.retrieval_score });
+          const row = table.find((r) => r.id === id);
+          if (row) row.retrieval_score = patch.retrieval_score;
+          return { error: null };
+        },
+      }),
+    };
+    const supabase = {
+      admin: { from: (name: string) => (name === 'job_postings_enriched' ? viewQuery() : tableQuery) },
+      unwrap: (result: { data: unknown; error: unknown }) => result.data ?? [],
+    };
+    const service = new IngestService(
+      supabase as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { get: (_key: string, fallback?: unknown) => fallback } as any,
+      {} as any,
+    );
+    return { service, updates };
+  }
+
+  it('scores and ranks a pre-migration row even when 200+ scored rows fill the ranked window', async () => {
+    const filler = Array.from({ length: 250 }, (_, i) =>
+      backlogRow({
+        id: `scored-${i}`,
+        url: `https://acme.com/careers/s${i}`,
+        retrieval_score: 20,
+        description_raw: 'A long enough job description to be analyzable by Groq.',
+      }),
+    );
+    const old = backlogRow({
+      id: 'old-1',
+      url: 'https://acme.com/careers/old',
+      retrieval_score: null,
+      description_raw: 'Backend Engineer building Node.js and PostgreSQL services for payments.',
+    });
+    const { service, updates } = buildServiceWithBacklog([...filler, old]);
+
+    const { toAnalyze } = await (service as any).buildAnalysisPool('user-1', SCORING_CTX, 5);
+
+    expect(updates.map((u) => u.id)).toContain('old-1');
+    expect(toAnalyze.map((job: { id: string }) => job.id)).toContain('old-1');
+  });
 });
 
 describe('dedupWithinRun', () => {
@@ -328,21 +467,7 @@ describe('dedupWithinRun', () => {
 });
 
 describe('toAnalysisCandidates', () => {
-  function row(overrides: Partial<BacklogRow> = {}): BacklogRow {
-    return {
-      id: 'row-1',
-      company_id: 'company-1',
-      title: 'Backend Engineer',
-      company_name: 'Acme',
-      location: 'Bangalore, India',
-      url: 'https://acme.com/careers/1',
-      description_raw: 'Node.js services',
-      posted_date: '2026-10-03',
-      source: 'ats_api',
-      retrieval_score: 77,
-      ...overrides,
-    };
-  }
+  const row = backlogRow;
 
   it('uses a stored retrieval score without rescoring', () => {
     const { candidates, rescored } = toAnalysisCandidates([row()], SCORING_CTX);

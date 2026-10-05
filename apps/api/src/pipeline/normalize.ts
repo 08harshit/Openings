@@ -30,16 +30,20 @@ const YEARS_SCAN_LIMIT = 4000;
 const MAX_PLAUSIBLE_YEARS = 20;
 const REMOTE_SCAN_LIMIT = 1500;
 const UNIT = '(?:years?|yrs?)';
+// A year count, decimals included. The lookbehind stops "1.5" being read
+// from its fractional digit as "5".
+const COUNT = '(?<![\\d.])(\\d{1,2}(?:\\.\\d+)?)';
+const UPPER = '(\\d{1,2}(?:\\.\\d+)?)';
 
 // Order matters: ranges claim their whole span first so the upper bound of
 // "2-4 years" is never re-read as a standalone "4 years".
 const YEARS_PATTERNS: RegExp[] = [
-  new RegExp(`\\b(\\d{1,2})\\s*(?:-|–|—|to)\\s*(\\d{1,2})\\s*\\+?\\s*${UNIT}\\b`, 'g'),
-  new RegExp(`\\b(?:minimum(?:\\s+of)?|at\\s+least)\\s+(\\d{1,2})\\s*\\+?\\s*${UNIT}\\b`, 'g'),
-  new RegExp(`\\b(\\d{1,2})\\s*\\+\\s*${UNIT}\\b`, 'g'),
+  new RegExp(`\\b${COUNT}\\s*(?:-|–|—|to)\\s*${UPPER}\\s*\\+?\\s*${UNIT}\\b`, 'g'),
+  new RegExp(`\\b(?:minimum(?:\\s+of)?|at\\s+least)\\s+${COUNT}\\s*\\+?\\s*${UNIT}\\b`, 'g'),
+  new RegExp(`\\b${COUNT}\\s*\\+\\s*${UNIT}\\b`, 'g'),
   // A bare "N years" only counts when "experience"/"exp" follows shortly,
   // otherwise "founded 5 years ago" would read as a requirement.
-  new RegExp(`\\b(\\d{1,2})\\s*${UNIT}\\b(?=[^.\\n]{0,40}?\\b(?:experience|exp)\\b)`, 'g'),
+  new RegExp(`\\b${COUNT}\\s*${UNIT}\\b(?=[^.\\n]{0,40}?\\b(?:experience|exp)\\b)`, 'g'),
 ];
 
 /**

@@ -34,6 +34,13 @@ export interface InsertedJob {
 }
 
 const ANALYSIS_POOL_QUERY_LIMIT = 200;
+/** Unscored (pre-0008) backlog rows scored per run before the ranked query. */
+const SCORE_BACKFILL_QUERY_LIMIT = 500;
+/** url_hash values per `in.(…)` filter — 100 md5 hashes keep the request URL
+ * a few KB, well under the API gateway's limit. */
+const EXISTING_HASH_CHUNK_SIZE = 100;
+const BACKLOG_COLUMNS =
+  'id, company_id, title, company_name, location, url, description_raw, posted_date, source, retrieval_score';
 /** Same bar analyzeAndPersist() already applies before calling Groq. */
 const MIN_ANALYZABLE_DESCRIPTION = 40;
 
@@ -430,18 +437,10 @@ export class IngestService {
     // highest-scoring copy, and the maxNew cap keeps the highest-scoring jobs.
     const unique = dedupWithinRun(scored);
 
-    const existingResult = await this.supabase.admin
-      .from('job_postings')
-      .select('url_hash')
-      .eq('user_id', userId)
-      .in(
-        'url_hash',
-        unique.map((item) => item.job.urlHash),
-      );
-    const existing = this.supabase.unwrap(existingResult, 'check existing postings') as Array<{
-      url_hash: string;
-    }>;
-    const existingHashes = new Set(existing.map((row) => row.url_hash));
+    const existingHashes = await this.findExistingHashes(
+      userId,
+      unique.map((item) => item.job.urlHash),
+    );
 
     const notInDb = unique.filter((item) => !existingHashes.has(item.job.urlHash));
     const toInsert = notInDb.slice(0, maxNew);
@@ -455,6 +454,21 @@ export class IngestService {
     // Duplicates = repeats within this run + jobs already saved. Jobs past
     // the maxNew cap are not duplicates; they are reconsidered next run.
     return { inserted, duplicates: scored.length - notInDb.length };
+  }
+
+  /** Chunked so a big run's `in.(…)` filter never outgrows the request URL. */
+  private async findExistingHashes(userId: string, hashes: string[]): Promise<Set<string>> {
+    const existing = new Set<string>();
+    for (let i = 0; i < hashes.length; i += EXISTING_HASH_CHUNK_SIZE) {
+      const result = await this.supabase.admin
+        .from('job_postings')
+        .select('url_hash')
+        .eq('user_id', userId)
+        .in('url_hash', hashes.slice(i, i + EXISTING_HASH_CHUNK_SIZE));
+      const rows = this.supabase.unwrap(result, 'check existing postings') as Array<{ url_hash: string }>;
+      for (const row of rows) existing.add(row.url_hash);
+    }
+    return existing;
   }
 
   private async insertOne(userId: string, item: ScoredJob, errors: string[]): Promise<InsertedJob | null> {
@@ -513,7 +527,8 @@ export class IngestService {
    * Groq's Top-N comes from every saved-but-unanalyzed job in the backlog
    * window — this run's inserts included — ranked by retrieval score. Rows
    * saved before migration 0008 have no score; they are scored from their
-   * stored fields here and the score is written back.
+   * stored fields and written back first, so the ranked query sees them
+   * instead of sorting them behind 200 scored rows forever.
    */
   private async buildAnalysisPool(
     userId: string,
@@ -523,9 +538,21 @@ export class IngestService {
     const backlogDays = this.config.get<number>('ingest.analysisBacklogDays', 30);
     const since = new Date(ctx.now.getTime() - backlogDays * 24 * 60 * 60 * 1000).toISOString();
 
+    const unscoredResult = await this.supabase.admin
+      .from('job_postings_enriched')
+      .select(BACKLOG_COLUMNS)
+      .eq('user_id', userId)
+      .is('match_score', null)
+      .eq('status', 'new')
+      .gte('scraped_at', since)
+      .is('retrieval_score', null)
+      .limit(SCORE_BACKFILL_QUERY_LIMIT);
+    const unscored = this.supabase.unwrap(unscoredResult, 'load unscored backlog') as BacklogRow[];
+    await this.storeRetrievalScores(toAnalysisCandidates(unscored, ctx).rescored);
+
     const result = await this.supabase.admin
       .from('job_postings_enriched')
-      .select('id, company_id, title, company_name, location, url, description_raw, posted_date, source, retrieval_score')
+      .select(BACKLOG_COLUMNS)
       .eq('user_id', userId)
       .is('match_score', null)
       .eq('status', 'new')
@@ -534,14 +561,10 @@ export class IngestService {
       .limit(ANALYSIS_POOL_QUERY_LIMIT);
     const rows = this.supabase.unwrap(result, 'load analysis backlog') as BacklogRow[];
 
+    // Any row still unscored here had its write-back fail; it is scored in
+    // memory again so it still competes this run.
     const { candidates, rescored } = toAnalysisCandidates(rows, ctx);
-    for (const update of rescored) {
-      const { error } = await this.supabase.admin
-        .from('job_postings')
-        .update({ retrieval_score: update.score, retrieval_signals: update.signals })
-        .eq('id', update.id);
-      if (error) this.logger.warn(`Could not store retrieval score for job ${update.id}: ${error.message}`);
-    }
+    await this.storeRetrievalScores(rescored);
 
     // analyzeAndPersist() skips descriptions under 40 chars; leaving them in
     // the pool would let a high-scoring but unanalyzable job hold a Groq slot
@@ -553,6 +576,18 @@ export class IngestService {
       title: c.job.title,
     }));
     return { toAnalyze: top.map((c) => c.job), poolSize: rows.length };
+  }
+
+  private async storeRetrievalScores(
+    updates: ReadonlyArray<{ id: string; score: number; signals: RetrievalSignals }>,
+  ): Promise<void> {
+    for (const update of updates) {
+      const { error } = await this.supabase.admin
+        .from('job_postings')
+        .update({ retrieval_score: update.score, retrieval_signals: update.signals })
+        .eq('id', update.id);
+      if (error) this.logger.warn(`Could not store retrieval score for job ${update.id}: ${error.message}`);
+    }
   }
 
   // ---------------------------------------------------------------------
