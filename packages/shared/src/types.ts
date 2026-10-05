@@ -237,6 +237,14 @@ export interface IngestRunSummary {
   companies_failed: number;
   companies_scraped: number;
   candidates_found: number;
+  /** Candidates that passed eligibility (before the score floor). */
+  candidates_eligible: number;
+  /** Eligible candidates dropped for scoring below the floor. */
+  candidates_below_floor: number;
+  /** Eligibility rejection reason code -> count. */
+  rejection_reasons: Record<string, number>;
+  /** Saved-but-unanalyzed jobs considered for this run's Groq Top-N. */
+  analysis_pool_size: number;
   duplicates_skipped: number;
   jobs_inserted: number;
   jobs_analyzed: number;

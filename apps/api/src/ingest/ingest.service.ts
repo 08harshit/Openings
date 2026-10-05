@@ -12,15 +12,20 @@ import { CvService } from '../cv/cv.service';
 import { fetchAtsJobs } from '../discovery/ats-clients';
 import { COMPANY_DISCOVERY_QUERIES } from '../discovery/discovery-queries';
 import { INDIA_SEED_COMPANIES } from '../discovery/seed-companies';
-import { canonicalizeUrl, companyNameFromHost, hostnameOf, isNonCompanyHost, urlHash } from '../common/url.util';
-import { companyFromTitle, guessSeniority, looksLikeRelevantRole, normalizeWhitespace } from '../common/text.util';
-import { isIndiaOrRemote } from '../common/location.util';
+import { canonicalizeUrl, companyNameFromHost, hostnameOf, isNonCompanyHost } from '../common/url.util';
+import { companyFromTitle, guessSeniority } from '../common/text.util';
 import { ageInDays } from '../common/date.util';
 import { mapWithConcurrency } from '../common/async.util';
 import type { RawJobCandidate } from '../firecrawl/firecrawl.types';
+import type { AtsJobListing } from '../discovery/ats-clients';
 import { scrapeCareerPage } from '../scraping/career-page-scraper';
+import { evaluateEligibility } from '../pipeline/eligibility';
+import { normalizeCandidate, type ScopedCandidate } from '../pipeline/normalize';
+import { scoreRetrieval, type RetrievalSignals, type ScoringContext } from '../pipeline/retrieval-score';
+import { evaluateCandidates, type ScoredJob } from '../pipeline/evaluate';
+import { selectTopN } from '../pipeline/select';
 
-interface InsertedJob {
+export interface InsertedJob {
   id: string;
   title: string;
   companyName: string | null;
@@ -28,13 +33,9 @@ interface InsertedJob {
   description: string;
 }
 
-/** A raw scrape result plus the company we already know it belongs to — set
- * during the scrape phase so insertion never needs to re-derive or guess it. */
-interface CompanyScopedCandidate {
-  candidate: RawJobCandidate;
-  companyId: string;
-  companyName: string;
-}
+const ANALYSIS_POOL_QUERY_LIMIT = 200;
+/** Same bar analyzeAndPersist() already applies before calling Groq. */
+const MIN_ANALYZABLE_DESCRIPTION = 40;
 
 @Injectable()
 export class IngestService {
@@ -153,12 +154,17 @@ export class IngestService {
       this.logger.log(`[${runId}] Ingestion run starting for user ${userId}`);
       this.logActivity(userId, 'Discovering new companies…');
 
-      const { profile } = await this.cv.getSnapshot(userId);
+      const { profile, skills } = await this.cv.getSnapshot(userId);
       const emptyProfileWarning = describeEmptyProfileWarning(profile);
       if (emptyProfileWarning) {
         this.logger.warn(`[${runId}] ${emptyProfileWarning}`);
         errors.push(emptyProfileWarning);
       }
+      const scoringContext: ScoringContext = {
+        profile,
+        cvSkillNames: skills.map((skill) => skill.name),
+        now: startedAt,
+      };
 
       const discovery = await this.discoverCompanies(userId, errors, profile);
       this.logActivity(
@@ -168,8 +174,16 @@ export class IngestService {
 
       const { candidates, companiesScraped } = await this.scrapeResolvedCompanies(userId, errors, profile);
 
+      const floor = this.config.get<number>('ingest.retrievalFloor', 40);
+      const evaluation = evaluateCandidates(candidates, scoringContext, floor);
+      this.logActivity(
+        userId,
+        `Evaluated ${candidates.length} candidate(s): ${evaluation.eligibleCount} eligible, ` +
+          `${evaluation.belowFloorCount} below the score floor, ${evaluation.accepted.length} kept`,
+      );
+
       const maxNew = this.config.get<number>('ingest.maxNewJobsPerRun', 100);
-      const { inserted, duplicates } = await this.dedupAndInsert(userId, candidates, maxNew, errors);
+      const { inserted, duplicates } = await this.dedupAndInsert(userId, evaluation.accepted, maxNew, errors);
       this.logActivity(
         userId,
         `Inserted ${inserted.length} new job(s), skipped ${duplicates} duplicate(s)`,
@@ -182,11 +196,11 @@ export class IngestService {
 
       const maxAnalyses = this.config.get<number>('ingest.maxAnalysesPerRun', 40);
       const concurrency = this.config.get<number>('ingest.analysisConcurrency', 1);
-      const toAnalyze = inserted.slice(0, maxAnalyses);
+      const { toAnalyze, poolSize } = await this.buildAnalysisPool(userId, scoringContext, maxAnalyses);
 
       let analyzed = 0;
       if (this.analysis.isConfigured && toAnalyze.length > 0) {
-        this.logActivity(userId, `Scoring ${toAnalyze.length} job(s) against your CV…`);
+        this.logActivity(userId, `Scoring the top ${toAnalyze.length} of ${poolSize} unanalyzed job(s) against your CV…`);
         await mapWithConcurrency(toAnalyze, concurrency, async (job) => {
           try {
             const ok = await this.analyzeAndPersist(userId, job);
@@ -214,6 +228,10 @@ export class IngestService {
         companies_failed: discovery.failed,
         companies_scraped: companiesScraped,
         candidates_found: candidates.length,
+        candidates_eligible: evaluation.eligibleCount,
+        candidates_below_floor: evaluation.belowFloorCount,
+        rejection_reasons: evaluation.rejectionReasons,
+        analysis_pool_size: poolSize,
         duplicates_skipped: duplicates,
         jobs_inserted: inserted.length,
         jobs_analyzed: analyzed,
@@ -319,10 +337,10 @@ export class IngestService {
     userId: string,
     errors: string[],
     profile: CvProfile,
-  ): Promise<{ candidates: CompanyScopedCandidate[]; companiesScraped: number }> {
+  ): Promise<{ candidates: ScopedCandidate[]; companiesScraped: number }> {
     const scrapable = await this.companies.listScrapable(userId);
     const toScrape = filterOutExcludedCompanies(scrapable, profile.excluded_companies);
-    const candidates: CompanyScopedCandidate[] = [];
+    const candidates: ScopedCandidate[] = [];
     let companiesScraped = 0;
 
     for (const company of toScrape) {
@@ -330,7 +348,7 @@ export class IngestService {
       try {
         const raw =
           company.ats_type && company.ats_board_token
-            ? await this.scrapeAtsCompany(company, profile)
+            ? await this.scrapeAtsCompany(company)
             : await this.scrapeCustomCareerPage(company, profile);
 
         for (const candidate of raw) {
@@ -351,40 +369,18 @@ export class IngestService {
     return { candidates, companiesScraped };
   }
 
-  private async scrapeAtsCompany(company: Company, profile: CvProfile): Promise<RawJobCandidate[]> {
+  private async scrapeAtsCompany(company: Company): Promise<RawJobCandidate[]> {
     const listings = await fetchAtsJobs(company.ats_type!, company.ats_board_token!);
 
     // No freshness filter here, deliberately: an ATS board only ever lists
     // currently-open reqs (Greenhouse/Lever/Ashby drop filled/closed postings
     // from this endpoint), so every listing is "fresh" by construction. The
-    // per-listing `postedDateIso` we do have (e.g. Greenhouse's `updated_at`)
-    // reflects when the listing was last edited, not how long it's been
-    // open — a real, currently-hiring role that hasn't needed an edit in two
-    // weeks would fail a "posted in the last N days" check even though it's
-    // exactly the kind of live opening this app exists to surface.
-    return listings
-      .filter((listing) =>
-        looksLikeRelevantRole(
-          listing.title,
-          listing.department,
-          profile.target_roles,
-          profile.excluded_roles,
-          profile.excluded_departments,
-        ),
-      )
-      .filter((listing) => isIndiaOrRemote(listing.location, profile.preferred_locations))
-      .map(
-        (listing): RawJobCandidate => ({
-          title: listing.title,
-          url: listing.url,
-          companyNameHint: company.name,
-          locationHint: listing.location,
-          snippet: (listing.description ?? '').slice(0, 2000),
-          markdown: listing.description,
-          source: 'ats_api',
-          postedDateIso: listing.postedDateIso,
-        }),
-      );
+    // per-listing `postedDateIso` reflects when the listing was last edited,
+    // not how long it's been open.
+    //
+    // No relevance/location filter either: eligibility is applied once,
+    // uniformly, in run() via evaluateCandidates().
+    return listings.map((listing) => atsListingToCandidate(listing, company.name));
   }
 
   private async scrapeCustomCareerPage(company: Company, profile: CvProfile): Promise<RawJobCandidate[]> {
@@ -398,47 +394,24 @@ export class IngestService {
 
     // Freshness: discoverCompanyJobs (Firecrawl path, below) already rejects
     // postings older than maxPostingAgeDays. The local scraper doesn't get
-    // that for free, so it's applied explicitly here before the relevance
-    // filter — a stale posting shouldn't count as a "credible candidate"
-    // that blocks the Firecrawl fallback, and shouldn't be inserted either.
+    // that for free, so it's applied explicitly here.
     const fresh = filterStalePostings(local, this.config.get<number>('ingest.maxPostingAgeDays', 2));
 
-    // Relevance and location are this app's own gate on top of "is this a
-    // posting at all". Applied here (not just at the end) so the fallback
-    // decision below is based on CREDIBLE candidates, not raw count — the
-    // local extractors are permissive enough that a careers page's own
-    // self-link or a "life at our company" sub-page can produce a
-    // non-empty, non-garbage-looking RawJobCandidate that isn't actually a
-    // relevant job. A raw count of 1 in that case must not block Firecrawl.
-    const relevant = fresh.filter(
-      (c) =>
-        looksLikeRelevantRole(
-          c.title,
-          null,
-          profile.target_roles,
-          profile.excluded_roles,
-          profile.excluded_departments,
-        ) && isIndiaOrRemote(c.locationHint, profile.preferred_locations),
+    // Fall back to Firecrawl unless at least one local result is CREDIBLE —
+    // passes the same eligibility check run() applies to everything. The
+    // local extractors can turn a careers page's own nav ("Life at Acme")
+    // into a non-empty candidate; eligibility's non_engineering_title check
+    // rejects those, so they never block the fallback.
+    const credible = fresh.filter(
+      (candidate) =>
+        evaluateEligibility(normalizeCandidate({ candidate, companyId: company.id, companyName: company.name }), profile)
+          .eligible,
     );
 
-    if (shouldFallBackToFirecrawl(relevant)) {
-      const raw = await this.firecrawl.discoverCompanyJobs(company.careers_url);
-      // discoverCompanyJobs already filters "is this a posting at all" and
-      // freshness; relevance and location are this app's own gate on top,
-      // applied here identically to the local path above.
-      return raw.filter(
-        (c) =>
-          looksLikeRelevantRole(
-            c.title,
-            null,
-            profile.target_roles,
-            profile.excluded_roles,
-            profile.excluded_departments,
-          ) && isIndiaOrRemote(c.locationHint, profile.preferred_locations),
-      );
+    if (shouldFallBackToFirecrawl(credible)) {
+      return this.firecrawl.discoverCompanyJobs(company.careers_url);
     }
-
-    return relevant;
+    return fresh;
   }
 
   // ---------------------------------------------------------------------
@@ -447,90 +420,81 @@ export class IngestService {
 
   private async dedupAndInsert(
     userId: string,
-    scoped: CompanyScopedCandidate[],
+    scored: ScoredJob[],
     maxNew: number,
     errors: string[],
   ): Promise<{ inserted: InsertedJob[]; duplicates: number }> {
-    if (scoped.length === 0) return { inserted: [], duplicates: 0 };
+    if (scored.length === 0) return { inserted: [], duplicates: 0 };
 
-    // Collapse candidates that resolve to the same URL within this run itself.
-    const byHash = new Map<string, CompanyScopedCandidate>();
-    for (const item of scoped) {
-      const hash = urlHash(item.candidate.url);
-      if (!byHash.has(hash)) byHash.set(hash, item);
-    }
+    // `scored` arrives best-first, so keeping the first occurrence keeps the
+    // highest-scoring copy, and the maxNew cap keeps the highest-scoring jobs.
+    const unique = dedupWithinRun(scored);
 
-    const hashes = [...byHash.keys()];
     const existingResult = await this.supabase.admin
       .from('job_postings')
       .select('url_hash')
       .eq('user_id', userId)
-      .in('url_hash', hashes);
+      .in(
+        'url_hash',
+        unique.map((item) => item.job.urlHash),
+      );
     const existing = this.supabase.unwrap(existingResult, 'check existing postings') as Array<{
       url_hash: string;
     }>;
     const existingHashes = new Set(existing.map((row) => row.url_hash));
 
-    const fresh = [...byHash.entries()]
-      .filter(([hash]) => !existingHashes.has(hash))
-      .slice(0, maxNew);
+    const notInDb = unique.filter((item) => !existingHashes.has(item.job.urlHash));
+    const toInsert = notInDb.slice(0, maxNew);
 
     const inserted: InsertedJob[] = [];
-    for (const [hash, item] of fresh) {
-      const row = await this.insertOne(userId, hash, item, errors);
+    for (const item of toInsert) {
+      const row = await this.insertOne(userId, item, errors);
       if (row) inserted.push(row);
     }
 
-    return { inserted, duplicates: byHash.size - fresh.length };
+    // Duplicates = repeats within this run + jobs already saved. Jobs past
+    // the maxNew cap are not duplicates; they are reconsidered next run.
+    return { inserted, duplicates: scored.length - notInDb.length };
   }
 
-  private async insertOne(
-    userId: string,
-    hash: string,
-    item: CompanyScopedCandidate,
-    errors: string[],
-  ): Promise<InsertedJob | null> {
-    const { candidate, companyId, companyName } = item;
-    const description = normalizeWhitespace(candidate.markdown ?? candidate.snippet ?? '');
+  private async insertOne(userId: string, item: ScoredJob, errors: string[]): Promise<InsertedJob | null> {
+    const { job, score, signals } = item;
 
     const result = await this.supabase.admin
       .from('job_postings')
       .upsert(
         {
           user_id: userId,
-          company_id: companyId,
-          title: candidate.title,
-          company_name: companyName,
-          location: candidate.locationHint,
-          url: canonicalizeUrl(candidate.url),
-          url_hash: hash,
-          description_raw: description || null,
-          seniority_guess: guessSeniority(candidate.title, description),
-          posted_date: candidate.postedDateIso,
-          source: candidate.source,
+          company_id: job.companyId,
+          title: job.title,
+          company_name: job.companyName,
+          location: job.location,
+          url: canonicalizeUrl(job.candidate.url),
+          url_hash: job.urlHash,
+          description_raw: job.description || null,
+          seniority_guess: guessSeniority(job.title, job.description),
+          posted_date: job.candidate.postedDateIso,
+          source: job.candidate.source,
           status: 'new',
+          external_id: job.externalId,
+          retrieval_score: score,
+          retrieval_signals: signals,
         },
-        // If the title/company also collide with an existing row (job re-listed
-        // under a new URL), this upsert quietly no-ops instead of erroring —
-        // onConflict only covers the url_hash key; the title/company unique
-        // index still protects against duplicate rows, surfaced as a 23505
-        // we swallow below.
+        // onConflict covers the url_hash key only. A collision on the
+        // (company, title, location) or (company, external_id) unique index
+        // surfaces as a 23505, swallowed below as a benign duplicate.
         { onConflict: 'user_id,url_hash' },
       )
       .select('id')
       .maybeSingle();
 
     if (result.error) {
-      // 23505 = unique_violation, almost certainly the (company, title) index —
-      // an expected, benign dedup case, not a real failure worth surfacing.
       if ((result.error as { code?: string }).code === '23505') return null;
-      const message = describeInsertError(candidate.title, result.error);
+      const message = describeInsertError(job.title, result.error);
       this.logger.warn(message);
-      // Any OTHER DB error (e.g. a CHECK-constraint violation from a
-      // migration — like 0007_http_scrape_source.sql — not yet applied to
-      // the live database) would otherwise fail silently from the user's
-      // point of view: nothing shows up in the run's errors[] the dashboard
-      // surfaces. Push it there too.
+      // Any OTHER DB error (e.g. a migration not yet applied to the live
+      // database) would otherwise fail silently from the user's point of
+      // view. Push it into the run's errors[] too.
       errors.push(message);
       return null;
     }
@@ -538,11 +502,57 @@ export class IngestService {
 
     return {
       id: result.data.id as string,
-      title: candidate.title,
-      companyName,
-      location: candidate.locationHint,
-      description,
+      title: job.title,
+      companyName: job.companyName,
+      location: job.location,
+      description: job.description,
     };
+  }
+
+  /**
+   * Groq's Top-N comes from every saved-but-unanalyzed job in the backlog
+   * window — this run's inserts included — ranked by retrieval score. Rows
+   * saved before migration 0008 have no score; they are scored from their
+   * stored fields here and the score is written back.
+   */
+  private async buildAnalysisPool(
+    userId: string,
+    ctx: ScoringContext,
+    limit: number,
+  ): Promise<{ toAnalyze: InsertedJob[]; poolSize: number }> {
+    const backlogDays = this.config.get<number>('ingest.analysisBacklogDays', 30);
+    const since = new Date(ctx.now.getTime() - backlogDays * 24 * 60 * 60 * 1000).toISOString();
+
+    const result = await this.supabase.admin
+      .from('job_postings_enriched')
+      .select('id, company_id, title, company_name, location, url, description_raw, posted_date, source, retrieval_score')
+      .eq('user_id', userId)
+      .is('match_score', null)
+      .eq('status', 'new')
+      .gte('scraped_at', since)
+      .order('retrieval_score', { ascending: false, nullsFirst: false })
+      .limit(ANALYSIS_POOL_QUERY_LIMIT);
+    const rows = this.supabase.unwrap(result, 'load analysis backlog') as BacklogRow[];
+
+    const { candidates, rescored } = toAnalysisCandidates(rows, ctx);
+    for (const update of rescored) {
+      const { error } = await this.supabase.admin
+        .from('job_postings')
+        .update({ retrieval_score: update.score, retrieval_signals: update.signals })
+        .eq('id', update.id);
+      if (error) this.logger.warn(`Could not store retrieval score for job ${update.id}: ${error.message}`);
+    }
+
+    // analyzeAndPersist() skips descriptions under 40 chars; leaving them in
+    // the pool would let a high-scoring but unanalyzable job hold a Groq slot
+    // every run without ever being analyzed.
+    const analyzable = candidates.filter((c) => c.job.description.trim().length >= MIN_ANALYZABLE_DESCRIPTION);
+    const top = selectTopN(analyzable, limit, (c) => ({
+      score: c.score,
+      postedDateIso: c.postedDateIso,
+      title: c.job.title,
+    }));
+    return { toAnalyze: top.map((c) => c.job), poolSize: rows.length };
   }
 
   // ---------------------------------------------------------------------
@@ -550,7 +560,7 @@ export class IngestService {
   // ---------------------------------------------------------------------
 
   private async analyzeAndPersist(userId: string, job: InsertedJob): Promise<boolean> {
-    if (!job.description || job.description.trim().length < 40) return false;
+    if (!job.description || job.description.trim().length < MIN_ANALYZABLE_DESCRIPTION) return false;
 
     const result = await this.analysis.analyze(userId, {
       title: job.title,
@@ -666,22 +676,9 @@ export function describeInsertError(title: string, error: { message: string; cod
 }
 
 /**
- * Zero CREDIBLE local candidates is the trigger to fall back to Firecrawl —
- * pulled out as its own function so the decision itself (not just its
- * consequence) is directly unit-testable without standing up the full
- * IngestService dependency graph.
- *
- * Takes already-relevance/location-filtered candidates, not the raw scrape
- * result. Judgment call: an earlier draft of this function took the raw
- * local candidates and used `.length === 0` as the sole signal, but
- * `looksLikeJobPosting()`/the generic Cheerio extractor are permissive
- * enough that a careers page's own self-link or a "life at our company"
- * sub-page can produce a non-empty, non-garbage-looking RawJobCandidate
- * that isn't actually a job — which blocked the Firecrawl fallback entirely
- * even though zero real postings were found. Checking "does a FILTERED
- * candidate survive" fixes that without needing to distinguish JSON-LD-
- * sourced from generic-extractor-sourced candidates (both currently share
- * the 'http_scrape' source tag) — the simpler, safer option.
+ * Zero CREDIBLE local candidates — none passes evaluateEligibility() — is
+ * the trigger to fall back to Firecrawl. Pulled out as its own function so
+ * the decision is unit-testable without the IngestService dependency graph.
  */
 export function shouldFallBackToFirecrawl(filteredLocalCandidates: RawJobCandidate[]): boolean {
   return filteredLocalCandidates.length === 0;
@@ -727,23 +724,124 @@ export function filterOutExcludedCompanies<T extends { name: string }>(
 }
 
 /**
- * An empty `target_roles` or `preferred_locations` list is a real reachable
- * state (e.g. a profile migrated before this feature existed, never backfilled
- * by design — see 0005_candidate_preferences.sql) and silently rejects every
- * single job, with no error anywhere. Surfacing it as a run error means a
- * zero-job run is explained instead of looking like a quiet, successful no-op.
+ * An empty `target_roles` or `preferred_locations` list narrows eligibility
+ * sharply and silently. It is a real reachable state (e.g. a profile migrated
+ * before this feature existed, never backfilled by design — see
+ * 0005_candidate_preferences.sql). Surfacing it as a run error means a
+ * near-empty run is explained instead of looking like a quiet, successful no-op.
  */
 export function describeEmptyProfileWarning(profile: {
   target_roles: readonly string[];
   preferred_locations: readonly string[];
 }): string | null {
-  const emptyFields: string[] = [];
-  if (profile.target_roles.length === 0) emptyFields.push('target_roles');
-  if (profile.preferred_locations.length === 0) emptyFields.push('preferred_locations');
-  if (emptyFields.length === 0) return null;
+  const consequences: string[] = [];
+  if (profile.target_roles.length === 0) {
+    consequences.push('target_roles is empty, so only generic engineering titles (engineer/developer/SDE) pass eligibility');
+  }
+  if (profile.preferred_locations.length === 0) {
+    consequences.push('preferred_locations is empty, so only jobs that state no location pass eligibility');
+  }
+  if (consequences.length === 0) return null;
 
-  return (
-    `Profile has empty ${emptyFields.join(' and ')} — every job will be rejected until you ` +
-    `PATCH /cv with values (see db/migrations/0005_candidate_preferences.sql for the fields to set).`
-  );
+  return `Profile warning: ${consequences.join('; ')}. PATCH /cv to set them (see db/migrations/0005_candidate_preferences.sql).`;
+}
+
+/** ATS listing -> scraped candidate. Eligibility is applied later, in run(). */
+export function atsListingToCandidate(listing: AtsJobListing, companyName: string): RawJobCandidate {
+  return {
+    title: listing.title,
+    url: listing.url,
+    companyNameHint: companyName,
+    locationHint: listing.location,
+    snippet: (listing.description ?? '').slice(0, 2000),
+    markdown: listing.description,
+    source: 'ats_api',
+    postedDateIso: listing.postedDateIso,
+    externalId: listing.externalId,
+    department: listing.department,
+  };
+}
+
+/** Keeps the first occurrence by URL hash and by company + ATS id. Callers
+ * pass best-first input, so the first occurrence is the best-scoring one. */
+export function dedupWithinRun(scored: readonly ScoredJob[]): ScoredJob[] {
+  const seenHashes = new Set<string>();
+  const seenExternal = new Set<string>();
+  const kept: ScoredJob[] = [];
+  for (const item of scored) {
+    const externalKey = item.job.externalId ? `${item.job.companyId}:${item.job.externalId}` : null;
+    if (seenHashes.has(item.job.urlHash)) continue;
+    if (externalKey && seenExternal.has(externalKey)) continue;
+    seenHashes.add(item.job.urlHash);
+    if (externalKey) seenExternal.add(externalKey);
+    kept.push(item);
+  }
+  return kept;
+}
+
+/** A saved, not-yet-analyzed job as read from job_postings_enriched. */
+export interface BacklogRow {
+  id: string;
+  company_id: string | null;
+  title: string;
+  company_name: string | null;
+  location: string | null;
+  url: string;
+  description_raw: string | null;
+  posted_date: string | null;
+  source: string;
+  retrieval_score: number | null;
+}
+
+export interface AnalysisCandidate {
+  job: InsertedJob;
+  score: number;
+  postedDateIso: string | null;
+}
+
+/** Backlog rows -> analysis candidates, scoring rows that predate the
+ * retrieval score from their stored fields. */
+export function toAnalysisCandidates(
+  rows: readonly BacklogRow[],
+  ctx: ScoringContext,
+): { candidates: AnalysisCandidate[]; rescored: Array<{ id: string; score: number; signals: RetrievalSignals }> } {
+  const candidates: AnalysisCandidate[] = [];
+  const rescored: Array<{ id: string; score: number; signals: RetrievalSignals }> = [];
+
+  for (const row of rows) {
+    let score = row.retrieval_score;
+    if (score === null || score === undefined) {
+      const normalized = normalizeCandidate({
+        candidate: {
+          title: row.title,
+          url: row.url,
+          companyNameHint: row.company_name,
+          locationHint: row.location,
+          snippet: '',
+          markdown: row.description_raw,
+          source: row.source as RawJobCandidate['source'],
+          postedDateIso: row.posted_date,
+        },
+        companyId: row.company_id ?? '',
+        companyName: row.company_name ?? '',
+      });
+      const result = scoreRetrieval(normalized, ctx);
+      score = result.score;
+      rescored.push({ id: row.id, score: result.score, signals: result.signals });
+    }
+
+    candidates.push({
+      job: {
+        id: row.id,
+        title: row.title,
+        companyName: row.company_name,
+        location: row.location,
+        description: row.description_raw ?? '',
+      },
+      score,
+      postedDateIso: row.posted_date,
+    });
+  }
+
+  return { candidates, rescored };
 }

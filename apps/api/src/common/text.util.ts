@@ -227,31 +227,3 @@ export function containsWord(haystack: string, marker: string): boolean {
   if (!trimmed) return false;
   return new RegExp(`\\b${escapeRegex(trimmed)}\\b`, 'i').test(haystack);
 }
-
-/**
- * Backend/full-stack relevance gate for company career pages, which list
- * every open role across the company — Sales, Design, Support, etc. — not
- * just engineering. `department` (when an ATS provides one) is checked
- * first as the stronger signal; title keywords are the fallback for
- * companies without a structured department field.
- *
- * `targetRoles`/`excludedRoles`/`excludedDepartments` come from the
- * candidate's profile (see CvProfile in packages/shared) — this function no
- * longer hardcodes them, so an empty `targetRoles` list means "nothing is
- * relevant," not "everything is."
- */
-export function looksLikeRelevantRole(
-  title: string,
-  department: string | null | undefined,
-  targetRoles: readonly string[],
-  excludedRoles: readonly string[],
-  excludedDepartments: readonly string[],
-): boolean {
-  if (department && excludedDepartments.some((marker) => containsWord(department, marker))) {
-    return false;
-  }
-
-  if (excludedRoles.some((marker) => containsWord(title, marker))) return false;
-
-  return targetRoles.some((marker) => containsWord(title, marker));
-}

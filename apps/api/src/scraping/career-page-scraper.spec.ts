@@ -3,8 +3,9 @@ import { join } from 'node:path';
 import { scrapeCareerPage } from './career-page-scraper';
 import * as fetcher from './http-page-fetcher';
 import * as extractor from './job-extractor';
-import { looksLikeRelevantRole } from '../common/text.util';
-import { isIndiaOrRemote } from '../common/location.util';
+import type { CvProfile } from '@jobportal/shared';
+import { evaluateEligibility } from '../pipeline/eligibility';
+import { normalizeCandidate } from '../pipeline/normalize';
 
 const OPTIONS = { timeoutMs: 5000, maxLinks: 10, concurrency: 3 };
 
@@ -140,12 +141,28 @@ describe('scrapeCareerPage', () => {
     // shouldFallBackToFirecrawl and scrapeCustomCareerPage). Under the OLD
     // logic (shouldFallBackToFirecrawl(raw), raw count > 0) Firecrawl would
     // never have been tried here, even though zero real jobs exist.
-    const targetRoles = ['backend', 'software engineer', 'full stack'];
-    const preferredLocations = ['india', 'remote'];
+    const profile: CvProfile = {
+      id: 'p1',
+      user_id: 'u1',
+      raw_cv_text: null,
+      experience_years: 2,
+      current_title: null,
+      updated_at: '2026-10-05T00:00:00Z',
+      target_roles: ['backend', 'software engineer', 'full stack'],
+      excluded_roles: [],
+      excluded_departments: [],
+      preferred_locations: ['india', 'remote'],
+      excluded_companies: [],
+      seniority_min_years: null,
+      seniority_max_years: null,
+      work_modes: [],
+      employment_types: [],
+      domain_preferences: [],
+      domain_exclusions: [],
+    };
     const credible = result.filter(
-      (c) =>
-        looksLikeRelevantRole(c.title, null, targetRoles, [], []) &&
-        isIndiaOrRemote(c.locationHint, preferredLocations),
+      (candidate) =>
+        evaluateEligibility(normalizeCandidate({ candidate, companyId: 'c1', companyName: 'Acme' }), profile).eligible,
     );
 
     expect(credible).toHaveLength(0);

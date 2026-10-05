@@ -1,4 +1,6 @@
 import {
+  atsListingToCandidate,
+  dedupWithinRun,
   describeEmptyProfileWarning,
   describeInsertError,
   filterOutExcludedCompanies,
@@ -6,9 +8,15 @@ import {
   IngestService,
   isExcludedCompany,
   shouldFallBackToFirecrawl,
+  toAnalysisCandidates,
+  type BacklogRow,
 } from './ingest.service';
+import type { CvProfile } from '@jobportal/shared';
 import type { RawJobCandidate } from '../firecrawl/firecrawl.types';
 import { toDateOnlyIso } from '../common/date.util';
+import { normalizeCandidate } from '../pipeline/normalize';
+import type { ScoredJob } from '../pipeline/evaluate';
+import type { ScoringContext } from '../pipeline/retrieval-score';
 
 function candidate(overrides: Partial<RawJobCandidate> = {}): RawJobCandidate {
   return {
@@ -23,6 +31,48 @@ function candidate(overrides: Partial<RawJobCandidate> = {}): RawJobCandidate {
     ...overrides,
   };
 }
+
+function scoredJob(overrides: Partial<RawJobCandidate> = {}, score = 80, companyId = 'company-1'): ScoredJob {
+  return {
+    job: normalizeCandidate({ candidate: candidate(overrides), companyId, companyName: 'Acme' }),
+    score,
+    signals: {
+      role: 25,
+      skills: 20,
+      experience: 12,
+      location: 10,
+      freshness: 3,
+      source: 4,
+      requiredYearsMin: null,
+      mentionedSkills: [],
+      matchedSkills: [],
+    },
+  };
+}
+
+const SCORING_CTX: ScoringContext = {
+  profile: {
+    id: 'p1',
+    user_id: 'u1',
+    raw_cv_text: null,
+    experience_years: 2.2,
+    current_title: null,
+    updated_at: '2026-10-05T00:00:00Z',
+    target_roles: ['backend'],
+    excluded_roles: [],
+    excluded_departments: [],
+    preferred_locations: ['india', 'remote'],
+    excluded_companies: [],
+    seniority_min_years: null,
+    seniority_max_years: null,
+    work_modes: [],
+    employment_types: [],
+    domain_preferences: [],
+    domain_exclusions: [],
+  } as CvProfile,
+  cvSkillNames: ['nodejs'],
+  now: new Date('2026-10-05T12:00:00Z'),
+};
 
 describe('company exclusion filtering', () => {
   it('excludes a company matching an excluded name case-insensitively', () => {
@@ -54,12 +104,12 @@ describe('filterOutExcludedCompanies', () => {
 });
 
 describe('describeEmptyProfileWarning', () => {
-  it('warns when target_roles is empty — an empty allow-list would silently reject every job', () => {
+  it('warns when target_roles is empty — only generic engineering titles would pass eligibility', () => {
     const warning = describeEmptyProfileWarning({ target_roles: [], preferred_locations: ['india'] });
     expect(warning).toMatch(/target_roles/);
   });
 
-  it('warns when preferred_locations is empty — an empty allow-list would silently reject every job', () => {
+  it('warns when preferred_locations is empty — only jobs stating no location would pass eligibility', () => {
     const warning = describeEmptyProfileWarning({ target_roles: ['backend'], preferred_locations: [] });
     expect(warning).toMatch(/preferred_locations/);
   });
@@ -165,13 +215,7 @@ describe('IngestService.insertOne DB-error visibility (I3/Fix 4)', () => {
     const service = buildServiceWithSupabaseError({ code: '23502', message: 'null value in column "title"' });
     const errors: string[] = [];
 
-    const scoped = [
-      {
-        candidate: candidate({ title: 'Backend Engineer', url: 'https://acme.com/careers/1' }),
-        companyId: 'company-1',
-        companyName: 'Acme',
-      },
-    ];
+    const scoped = [scoredJob({ title: 'Backend Engineer', url: 'https://acme.com/careers/1' })];
 
     // dedupAndInsert is private — accessed via bracket notation, the same
     // pragmatic escape hatch used to unit-test a private method without a
@@ -188,16 +232,153 @@ describe('IngestService.insertOne DB-error visibility (I3/Fix 4)', () => {
     const service = buildServiceWithSupabaseError({ code: '23505', message: 'duplicate key value' });
     const errors: string[] = [];
 
-    const scoped = [
-      {
-        candidate: candidate({ title: 'Backend Engineer', url: 'https://acme.com/careers/1' }),
-        companyId: 'company-1',
-        companyName: 'Acme',
-      },
-    ];
+    const scoped = [scoredJob({ title: 'Backend Engineer', url: 'https://acme.com/careers/1' })];
 
     await (service as any).dedupAndInsert('user-1', scoped, 100, errors);
 
     expect(errors).toEqual([]);
+  });
+});
+
+describe('IngestService.dedupAndInsert ordering and payload', () => {
+  function buildServiceRecordingUpserts() {
+    const upserts: Array<Record<string, unknown>> = [];
+    let counter = 0;
+    const fromResult = {
+      upsert: (payload: Record<string, unknown>) => {
+        upserts.push(payload);
+        counter += 1;
+        const id = `job-${counter}`;
+        const chain = {
+          select: () => chain,
+          maybeSingle: async () => ({ data: { id }, error: null }),
+        };
+        return chain;
+      },
+      select: () => fromResult,
+      eq: () => fromResult,
+      in: async () => ({ data: [], error: null }),
+    };
+    const supabase = {
+      admin: { from: () => fromResult },
+      unwrap: (result: { data: unknown; error: unknown }) => result.data ?? [],
+    };
+    const service = new IngestService(
+      supabase as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { get: (_key: string, fallback?: unknown) => fallback } as any,
+      {} as any,
+    );
+    return { service, upserts };
+  }
+
+  it('keeps the highest-scoring jobs when more pass than maxNewJobsPerRun', async () => {
+    const { service, upserts } = buildServiceRecordingUpserts();
+    const ordered = [
+      scoredJob({ url: 'https://acme.com/careers/1' }, 90),
+      scoredJob({ url: 'https://acme.com/careers/2' }, 80),
+      scoredJob({ url: 'https://acme.com/careers/3' }, 70),
+    ];
+
+    const result = await (service as any).dedupAndInsert('user-1', ordered, 2, []);
+
+    expect(result.inserted).toHaveLength(2);
+    expect(upserts.map((p) => p.url)).toEqual(['https://acme.com/careers/1', 'https://acme.com/careers/2']);
+    expect(upserts[0].retrieval_score).toBe(90);
+  });
+
+  it('writes external_id and retrieval_signals', async () => {
+    const { service, upserts } = buildServiceRecordingUpserts();
+
+    await (service as any).dedupAndInsert('user-1', [scoredJob({ externalId: 'gh-42' }, 77)], 100, []);
+
+    expect(upserts[0].external_id).toBe('gh-42');
+    expect(upserts[0].retrieval_signals).toEqual(expect.objectContaining({ role: 25 }));
+  });
+});
+
+describe('dedupWithinRun', () => {
+  it('keeps the first of two candidates with the same URL', () => {
+    const kept = dedupWithinRun([
+      scoredJob({ url: 'https://acme.com/careers/1' }, 90),
+      scoredJob({ url: 'https://acme.com/careers/1?utm_source=x' }, 60),
+    ]);
+    expect(kept.map((s) => s.score)).toEqual([90]);
+  });
+
+  it('keeps the first of two candidates with the same company and ATS id', () => {
+    const kept = dedupWithinRun([
+      scoredJob({ url: 'https://acme.com/a', externalId: '7' }, 90),
+      scoredJob({ url: 'https://acme.com/b', externalId: '7' }, 60),
+    ]);
+    expect(kept).toHaveLength(1);
+  });
+
+  it('keeps the same title in two cities', () => {
+    const kept = dedupWithinRun([
+      scoredJob({ url: 'https://acme.com/be-pune', locationHint: 'Pune, India' }, 80),
+      scoredJob({ url: 'https://acme.com/be-blr', locationHint: 'Bangalore, India' }, 80),
+    ]);
+    expect(kept).toHaveLength(2);
+  });
+});
+
+describe('toAnalysisCandidates', () => {
+  function row(overrides: Partial<BacklogRow> = {}): BacklogRow {
+    return {
+      id: 'row-1',
+      company_id: 'company-1',
+      title: 'Backend Engineer',
+      company_name: 'Acme',
+      location: 'Bangalore, India',
+      url: 'https://acme.com/careers/1',
+      description_raw: 'Node.js services',
+      posted_date: '2026-10-03',
+      source: 'ats_api',
+      retrieval_score: 77,
+      ...overrides,
+    };
+  }
+
+  it('uses a stored retrieval score without rescoring', () => {
+    const { candidates, rescored } = toAnalysisCandidates([row()], SCORING_CTX);
+    expect(candidates[0].score).toBe(77);
+    expect(rescored).toEqual([]);
+  });
+
+  it('scores a pre-migration row with no stored score and no description', () => {
+    const { candidates, rescored } = toAnalysisCandidates(
+      [row({ id: 'old', retrieval_score: null, description_raw: null })],
+      SCORING_CTX,
+    );
+    expect(rescored).toHaveLength(1);
+    expect(rescored[0].id).toBe('old');
+    expect(typeof candidates[0].score).toBe('number');
+    expect(candidates[0].job.description).toBe('');
+  });
+});
+
+describe('atsListingToCandidate', () => {
+  it('carries the ATS id and department onto the candidate', () => {
+    const c = atsListingToCandidate(
+      {
+        title: 'Backend Engineer',
+        url: 'https://boards.greenhouse.io/acme/jobs/1',
+        location: 'Bangalore',
+        postedDateIso: '2026-10-01',
+        department: 'Engineering',
+        description: 'desc',
+        externalId: '1',
+      },
+      'Acme',
+    );
+    expect(c.externalId).toBe('1');
+    expect(c.department).toBe('Engineering');
+    expect(c.source).toBe('ats_api');
+    expect(c.companyNameHint).toBe('Acme');
   });
 });
