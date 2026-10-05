@@ -197,6 +197,22 @@ export interface JobDetail extends JobListItem {
     confidence: number;
   } | null;
   preference_score: number | null;
+  /** The cheap retrieval score and its per-part breakdown (sub-project 3),
+   * surfaced here for the "why this score" detail view. Mirrors
+   * apps/api/src/pipeline/retrieval-score.ts's RetrievalSignals — duplicated
+   * rather than imported, since packages/shared cannot depend on apps/api. */
+  retrieval_score: number | null;
+  retrieval_signals: {
+    role: number;
+    skills: number;
+    experience: number;
+    location: number;
+    freshness: number;
+    source: number;
+    requiredYearsMin: number | null;
+    mentionedSkills: string[];
+    matchedSkills: string[];
+  } | null;
 }
 
 export interface Paginated<T> {
@@ -260,6 +276,10 @@ export interface LlmJobEvaluation {
   summary: string;
   /** 0-100 — Groq's own confidence in this evaluation. */
   confidence: number;
+  /** Every distinct skill the JD mentions, matched or not, with a required
+   * flag — kept from the pre-sub-project-4 shape (SkillGapResult) because
+   * job_skills.required still needs it. */
+  requiredSkills: Array<{ name: string; required: boolean }>;
 }
 
 export const RECOMMENDATION_LABELS = [

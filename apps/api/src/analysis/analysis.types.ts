@@ -108,10 +108,26 @@ export const LLM_EVALUATION_JSON_SCHEMA = {
       type: 'integer',
       description: '0-100: how confident this evaluation is, given how much detail the JD and CV provided.',
     },
+    requiredSkills: {
+      type: 'array',
+      description: 'Every distinct skill the JD mentions, matched or not, with a required flag.',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Canonical, lowercase-hyphenated skill slug.' },
+          required: {
+            type: 'boolean',
+            description: 'true if the JD lists it as required/must-have, false if nice-to-have.',
+          },
+        },
+        required: ['name', 'required'],
+        additionalProperties: false,
+      },
+    },
   },
   required: [
     'roleFit', 'seniorityFit', 'requiredSkillFit', 'preferredSkillFit', 'experienceFit', 'domainFit',
-    'criticalMismatch', 'matchedSkills', 'missingSkills', 'criticalGaps', 'summary', 'confidence',
+    'criticalMismatch', 'matchedSkills', 'missingSkills', 'criticalGaps', 'summary', 'confidence', 'requiredSkills',
   ],
   additionalProperties: false,
 } as const;

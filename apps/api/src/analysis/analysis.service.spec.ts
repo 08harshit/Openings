@@ -15,6 +15,11 @@ function rawResponse(overrides: Partial<RawLlmEvaluationResponse> = {}): RawLlmE
     criticalGaps: [],
     summary: 'Strong backend match; missing container orchestration exposure.',
     confidence: 85,
+    requiredSkills: [
+      { name: 'nodejs', required: true },
+      { name: 'kubernetes', required: true },
+      { name: 'graphql', required: false },
+    ],
     ...overrides,
   };
 }
@@ -26,6 +31,28 @@ describe('toLlmJobEvaluation', () => {
     expect(result.criticalMismatch).toBe(false);
     expect(result.matchedSkills).toEqual(['nodejs', 'postgresql']);
     expect(result.confidence).toBe(85);
+    expect(result.requiredSkills).toEqual([
+      { name: 'nodejs', required: true },
+      { name: 'kubernetes', required: true },
+      { name: 'graphql', required: false },
+    ]);
+  });
+
+  it('defaults a missing required_skills array to empty', () => {
+    const result = toLlmJobEvaluation(rawResponse({ requiredSkills: undefined as unknown as Array<{ name: string; required: boolean }> }));
+    expect(result.requiredSkills).toEqual([]);
+  });
+
+  it('drops a required-skill entry with no name and coerces required to a boolean', () => {
+    const result = toLlmJobEvaluation(
+      rawResponse({
+        requiredSkills: [
+          { name: '', required: true },
+          { name: 'docker', required: 1 as unknown as boolean },
+        ],
+      }),
+    );
+    expect(result.requiredSkills).toEqual([{ name: 'docker', required: true }]);
   });
 
   it('clamps every fit field to 0-100', () => {

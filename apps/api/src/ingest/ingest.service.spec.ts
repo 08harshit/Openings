@@ -523,6 +523,7 @@ function llmEvaluation(overrides: Partial<LlmJobEvaluation> = {}): LlmJobEvaluat
     criticalGaps: [],
     summary: 'Strong backend match.',
     confidence: 85,
+    requiredSkills: [{ name: 'nodejs', required: true }],
     ...overrides,
   };
 }
@@ -549,7 +550,13 @@ describe('IngestService.analyzeAndPersist — final score wiring', () => {
       isConfigured: true,
       analyze: async () => evaluation,
     };
-    const skills = { ensure: async () => new Map<string, string>() };
+    const skillsEnsureCalls: string[][] = [];
+    const skills = {
+      ensure: async (names: string[]) => {
+        skillsEnsureCalls.push(names);
+        return new Map(names.map((name) => [name, `skill-${name}`]));
+      },
+    };
     const cv = {
       getSnapshot: async () => ({
         profile: {
@@ -594,10 +601,10 @@ describe('IngestService.analyzeAndPersist — final score wiring', () => {
       } as any,
       cv as any,
     );
-    return { service, upserts, updates };
+    return { service, upserts, updates, skillsEnsureCalls };
   }
 
-  function insertedJob(overrides: Partial<InsertedJob & { retrievalScore: number }> = {}) {
+  function insertedJob(overrides: Partial<InsertedJob> = {}) {
     return {
       id: 'job-1',
       title: 'Backend Engineer',
@@ -605,6 +612,7 @@ describe('IngestService.analyzeAndPersist — final score wiring', () => {
       location: 'Remote',
       description: 'A long enough job description to be analyzable by Groq, building backend services.',
       retrievalScore: 70,
+      postedDateIso: null,
       ...overrides,
     } as any;
   }
@@ -633,6 +641,48 @@ describe('IngestService.analyzeAndPersist — final score wiring', () => {
     expect(analysisUpsert!.payload.match_score).toBe(analysisUpsert!.payload.llm_score);
   });
 
+  it('persists requiredSkills from the evaluation onto job_skills, not a matched/missing remap', async () => {
+    const { service, upserts, skillsEnsureCalls } = buildServiceWithAnalysis(
+      llmEvaluation({
+        requiredSkills: [
+          { name: 'nodejs', required: true },
+          { name: 'graphql', required: false },
+        ],
+      }),
+    );
+
+    await (service as any).analyzeAndPersist('user-1', insertedJob());
+
+    expect(skillsEnsureCalls[0]).toEqual(['nodejs', 'graphql']);
+    const jobSkillsUpsert = upserts.find((u) => u.table === 'job_skills');
+    expect(jobSkillsUpsert).toBeDefined();
+    const rows = jobSkillsUpsert!.payload as unknown as Array<{ skill_id: string; required: boolean }>;
+    expect(rows).toEqual([
+      { job_posting_id: 'job-1', skill_id: 'skill-nodejs', required: true },
+      { job_posting_id: 'job-1', skill_id: 'skill-graphql', required: false },
+    ]);
+  });
+
+  it('dedupes a skill name Groq lists in both matched and required lists, keeping it required', async () => {
+    const { service, upserts } = buildServiceWithAnalysis(
+      llmEvaluation({
+        matchedSkills: ['nodejs'],
+        missingSkills: [],
+        requiredSkills: [
+          { name: 'nodejs', required: true },
+          { name: 'nodejs', required: false },
+        ],
+      }),
+    );
+
+    await (service as any).analyzeAndPersist('user-1', insertedJob());
+
+    const jobSkillsUpsert = upserts.find((u) => u.table === 'job_skills');
+    const rows = jobSkillsUpsert!.payload as unknown as Array<{ skill_id: string; required: boolean }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].required).toBe(true);
+  });
+
   it('does nothing when Groq returns null (unconfigured or parse failure)', async () => {
     const { service, upserts, updates } = buildServiceWithAnalysis(null);
 
@@ -655,5 +705,19 @@ describe('IngestService.analyzeAndPersist — final score wiring', () => {
     const normalScore = normalUpdates.find((u) => u.table === 'job_postings')!.payload.final_score as number;
     const mismatchScore = mismatchUpdates.find((u) => u.table === 'job_postings')!.payload.final_score as number;
     expect(mismatchScore).toBeLessThan(normalScore);
+  });
+
+  it('scores a freshly posted job higher than a stale one, all else equal', async () => {
+    const { service: freshService, updates: freshUpdates } = buildServiceWithAnalysis(llmEvaluation());
+    const { service: staleService, updates: staleUpdates } = buildServiceWithAnalysis(llmEvaluation());
+    const today = new Date().toISOString();
+    const monthAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+
+    await (freshService as any).analyzeAndPersist('user-1', insertedJob({ retrievalScore: 70, postedDateIso: today }));
+    await (staleService as any).analyzeAndPersist('user-1', insertedJob({ retrievalScore: 70, postedDateIso: monthAgo }));
+
+    const freshScore = freshUpdates.find((u) => u.table === 'job_postings')!.payload.final_score as number;
+    const staleScore = staleUpdates.find((u) => u.table === 'job_postings')!.payload.final_score as number;
+    expect(freshScore).toBeGreaterThan(staleScore);
   });
 });

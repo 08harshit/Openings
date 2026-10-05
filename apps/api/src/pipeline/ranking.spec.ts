@@ -17,6 +17,7 @@ function evaluation(overrides: Partial<LlmJobEvaluation> = {}): LlmJobEvaluation
     criticalGaps: [],
     summary: '',
     confidence: 85,
+    requiredSkills: [],
     ...overrides,
   };
 }

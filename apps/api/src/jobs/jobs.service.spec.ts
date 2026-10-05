@@ -34,18 +34,43 @@ function enrichedRow(overrides: Record<string, unknown> = {}) {
     experience_fit: 75,
     domain_fit: 50,
     preference_score: 65,
+    retrieval_score: 67,
+    retrieval_signals: {
+      role: 25,
+      skills: 20,
+      experience: 12,
+      location: 10,
+      freshness: 3,
+      source: 4,
+      requiredYearsMin: 3,
+      mentionedSkills: ['nodejs'],
+      matchedSkills: ['nodejs'],
+    },
     ...overrides,
   };
 }
 
 function buildListService(row: Record<string, unknown>) {
+  const calls: Array<{ method: string; args: unknown[] }> = [];
   const fromResult: any = {
     select: () => fromResult,
-    eq: () => fromResult,
+    eq: (...args: unknown[]) => {
+      calls.push({ method: 'eq', args });
+      return fromResult;
+    },
     in: () => fromResult,
-    gte: () => fromResult,
-    lte: () => fromResult,
-    is: () => fromResult,
+    gte: (...args: unknown[]) => {
+      calls.push({ method: 'gte', args });
+      return fromResult;
+    },
+    lte: (...args: unknown[]) => {
+      calls.push({ method: 'lte', args });
+      return fromResult;
+    },
+    is: (...args: unknown[]) => {
+      calls.push({ method: 'is', args });
+      return fromResult;
+    },
     contains: () => fromResult,
     or: () => fromResult,
     order: () => fromResult,
@@ -56,7 +81,8 @@ function buildListService(row: Record<string, unknown>) {
     unwrap: (result: { data: unknown; error: unknown }) => result.data ?? [],
     unwrapMaybe: (result: { data: unknown; error: unknown }) => result.data ?? null,
   };
-  return new JobsService(supabase as any, { get: (_k: string, fallback?: unknown) => fallback } as any);
+  const service = new JobsService(supabase as any, { get: (_k: string, fallback?: unknown) => fallback } as any);
+  return { service, calls };
 }
 
 function buildFindOneService(row: Record<string, unknown>) {
@@ -99,17 +125,35 @@ function buildFindOneService(row: Record<string, unknown>) {
 
 describe('JobsService.list — final_score surfacing', () => {
   it('includes final_score and recommendation on each list item', async () => {
-    const service = buildListService(enrichedRow());
+    const { service } = buildListService(enrichedRow());
     const result = await service.list('user-1', {});
     expect(result.items[0].final_score).toBe(82);
     expect(result.items[0].recommendation).toBe('STRONG_MATCH');
   });
 
   it('returns null final_score/recommendation for an unanalyzed job without crashing', async () => {
-    const service = buildListService(enrichedRow({ final_score: null, recommendation: null }));
+    const { service } = buildListService(enrichedRow({ final_score: null, recommendation: null }));
     const result = await service.list('user-1', {});
     expect(result.items[0].final_score).toBeNull();
     expect(result.items[0].recommendation).toBeNull();
+  });
+
+  it('filters min_score/max_score on final_score', async () => {
+    const { service, calls } = buildListService(enrichedRow());
+    await service.list('user-1', { min_score: 50, max_score: 90 });
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        { method: 'gte', args: ['final_score', 50] },
+        { method: 'lte', args: ['final_score', 90] },
+      ]),
+    );
+  });
+
+  it('filters unscored_only on match_score — a job analyzed before migration 0009 still has match_score set and must not be called "unscored"', async () => {
+    const { service, calls } = buildListService(enrichedRow());
+    await service.list('user-1', { unscored_only: true });
+    expect(calls).toEqual(expect.arrayContaining([{ method: 'is', args: ['match_score', null] }]));
+    expect(calls).not.toEqual(expect.arrayContaining([{ method: 'is', args: ['final_score', null] }]));
   });
 });
 
@@ -130,6 +174,10 @@ describe('JobsService.findOne — llm_evaluation breakdown', () => {
       confidence: 85,
     });
     expect(detail.preference_score).toBe(65);
+    expect(detail.retrieval_score).toBe(67);
+    expect(detail.retrieval_signals).toEqual(
+      expect.objectContaining({ role: 25, mentionedSkills: ['nodejs'] }),
+    );
   });
 
   it('returns a null llm_evaluation for an unanalyzed job', async () => {

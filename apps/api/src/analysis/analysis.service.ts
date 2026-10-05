@@ -47,7 +47,8 @@ Respond with ONLY a single JSON object — no markdown fences, no commentary —
   "missingSkills": [<canonical skill slug strings the JD wants but the CV lacks>],
   "criticalGaps": [<short phrases naming the specific critical mismatch reason(s), empty if none>],
   "summary": "<one or two short sentences on the fit, no preamble>",
-  "confidence": <integer 0-100>
+  "confidence": <integer 0-100>,
+  "requiredSkills": [{ "name": <canonical skill slug>, "required": <boolean> }, ...] (every distinct skill the JD mentions, matched or not)
 }`;
 
 /**
@@ -301,5 +302,17 @@ export function toLlmJobEvaluation(raw: RawLlmEvaluationResponse): LlmJobEvaluat
       : [],
     summary: (raw.summary ?? '').trim().slice(0, 500),
     confidence: clampFit(raw.confidence),
+    requiredSkills: toRequiredSkills(raw.requiredSkills),
   };
+}
+
+function toRequiredSkills(value: unknown): Array<{ name: string; required: boolean }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (typeof entry !== 'object' || entry === null) return null;
+      const name = normalizeSkillList([String((entry as Record<string, unknown>).name ?? '')])[0];
+      return name ? { name, required: Boolean((entry as Record<string, unknown>).required) } : null;
+    })
+    .filter((s): s is { name: string; required: boolean } => s !== null);
 }

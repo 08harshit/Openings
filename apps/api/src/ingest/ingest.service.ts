@@ -39,6 +39,7 @@ export interface InsertedJob {
   location: string | null;
   description: string;
   retrievalScore: number;
+  postedDateIso: string | null;
 }
 
 const ANALYSIS_POOL_QUERY_LIMIT = 200;
@@ -529,6 +530,7 @@ export class IngestService {
       location: job.location,
       description: job.description,
       retrievalScore: score,
+      postedDateIso: job.candidate.postedDateIso,
     };
   }
 
@@ -635,7 +637,7 @@ export class IngestService {
       workModes: profile.work_modes,
       domainPreferences: profile.domain_preferences,
     });
-    const freshnessScore = freshnessPoints(null, new Date()) * (100 / RETRIEVAL_WEIGHTS.freshness);
+    const freshnessScore = freshnessPoints(job.postedDateIso, new Date()) * (100 / RETRIEVAL_WEIGHTS.freshness);
     const weights = {
       retrieval: this.config.get<number>('ranking.weightRetrieval', 35),
       llm: this.config.get<number>('ranking.weightLlm', 45),
@@ -681,15 +683,12 @@ export class IngestService {
       this.logger.warn(`Could not save final score for job ${job.id}: ${postingError.message}`);
     }
 
-    await this.persistJobSkills(
-      job.id,
-      [...evaluation.matchedSkills, ...evaluation.missingSkills].map((name) => ({
-        name,
-        required: evaluation.missingSkills.includes(name),
-      })),
-    );
+    await this.persistJobSkills(job.id, dedupeRequiredSkills(evaluation.requiredSkills));
     return true;
   }
+
+  // dedupeRequiredSkills lives at module scope (see bottom of file) so it's
+  // directly unit-testable without the IngestService dependency graph.
 
   private async persistJobSkills(
     jobId: string,
@@ -767,6 +766,24 @@ function describeError(error: unknown): string {
  * directly unit-testable. */
 export function describeInsertError(title: string, error: { message: string; code?: string }): string {
   return `Insert failed for "${title}": ${error.message}`;
+}
+
+/** Collapses a required-skills list to one row per skill name before the
+ * job_skills upsert. Groq occasionally lists the same slug twice (e.g. two
+ * spellings that normalize to one canonical name) — a duplicate
+ * `(job_posting_id, skill_id)` pair in one upsert batch makes Postgres
+ * reject the WHOLE statement ("ON CONFLICT DO UPDATE command cannot affect
+ * row a second time"), silently dropping every job_skills row for that job.
+ * On a conflict, `required: true` wins — a skill flagged required by any
+ * mention is treated as required. */
+export function dedupeRequiredSkills(
+  requiredSkills: ReadonlyArray<{ name: string; required: boolean }>,
+): Array<{ name: string; required: boolean }> {
+  const byName = new Map<string, boolean>();
+  for (const skill of requiredSkills) {
+    byName.set(skill.name, (byName.get(skill.name) ?? false) || skill.required);
+  }
+  return [...byName.entries()].map(([name, required]) => ({ name, required }));
 }
 
 /**
@@ -932,6 +949,7 @@ export function toAnalysisCandidates(
         location: row.location,
         description: row.description_raw ?? '',
         retrievalScore: score,
+        postedDateIso: row.posted_date,
       },
       score,
       postedDateIso: row.posted_date,

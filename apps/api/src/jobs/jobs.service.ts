@@ -56,7 +56,12 @@ export class JobsService {
     if (query.seniority) builder = builder.eq('seniority_guess', query.seniority);
     if (query.min_score !== undefined) builder = builder.gte('final_score', query.min_score);
     if (query.max_score !== undefined) builder = builder.lte('final_score', query.max_score);
-    if (query.unscored_only) builder = builder.is('final_score', null);
+    // "Unscored" means "not yet analyzed" — match_score, not final_score. A job
+    // analyzed before migration 0009 has match_score set but final_score null
+    // (never backfilled); filtering unscored_only on final_score would wrongly
+    // call that job unscored and desync from stats()'s unscored_count, which
+    // still counts match_score.
+    if (query.unscored_only) builder = builder.is('match_score', null);
     if (query.missing_skill) {
       builder = builder.contains('missing_skills', JSON.stringify([query.missing_skill]));
     }
@@ -149,6 +154,8 @@ export class JobsService {
       required_skills: requiredSkills,
       llm_evaluation: this.toLlmEvaluation(row),
       preference_score: row.preference_score,
+      retrieval_score: row.retrieval_score,
+      retrieval_signals: (row.retrieval_signals ?? null) as JobDetail['retrieval_signals'],
     };
   }
 
@@ -384,6 +391,8 @@ interface EnrichedRow {
   experience_fit: number | null;
   domain_fit: number | null;
   preference_score: number | null;
+  retrieval_score: number | null;
+  retrieval_signals: unknown;
 }
 
 function asStringArray(value: unknown): string[] {

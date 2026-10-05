@@ -56,4 +56,5 @@ export interface RawLlmEvaluationResponse {
   criticalGaps: string[];
   summary: string;
   confidence: number;
+  requiredSkills: Array<{ name: string; required: boolean }>;
 }

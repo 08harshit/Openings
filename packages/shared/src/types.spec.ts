@@ -15,8 +15,10 @@ describe('LlmJobEvaluation shape', () => {
       criticalGaps: [],
       summary: 'Strong backend match.',
       confidence: 85,
+      requiredSkills: [{ name: 'nodejs', required: true }],
     };
     expect(evaluation.roleFit).toBe(80);
+    expect(evaluation.requiredSkills).toEqual([{ name: 'nodejs', required: true }]);
   });
 });
 
@@ -56,6 +58,30 @@ describe('JobDetail llm_evaluation breakdown', () => {
 
     const withoutBreakdown: Pick<JobDetail, 'llm_evaluation'> = { llm_evaluation: null };
     expect(withoutBreakdown.llm_evaluation).toBeNull();
+  });
+
+  it('allows a retrieval_score/retrieval_signals breakdown or null', () => {
+    const withSignals: Pick<JobDetail, 'retrieval_score' | 'retrieval_signals'> = {
+      retrieval_score: 67,
+      retrieval_signals: {
+        role: 25,
+        skills: 20,
+        experience: 12,
+        location: 10,
+        freshness: 3,
+        source: 4,
+        requiredYearsMin: 3,
+        mentionedSkills: ['nodejs'],
+        matchedSkills: ['nodejs'],
+      },
+    };
+    expect(withSignals.retrieval_signals?.role).toBe(25);
+
+    const withoutSignals: Pick<JobDetail, 'retrieval_score' | 'retrieval_signals'> = {
+      retrieval_score: null,
+      retrieval_signals: null,
+    };
+    expect(withoutSignals.retrieval_score).toBeNull();
   });
 });
 
